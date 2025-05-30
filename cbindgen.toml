@@ -1,0 +1,28 @@
+# cbindgen configuration for umbrella maya plugin
+language = "C"
+header = "/* Umbrella Maya Plugin - Generated C bindings */"
+include_version = true
+namespace = "umbrella"
+cpp_compat = true
+style = "both"
+
+[export]
+include = ["UmbrellaResult", "UmbrellaConfig", "ScanResult"]
+
+[parse]
+parse_deps = true
+include = ["umbrella_maya_plugin"]
+
+[fn]
+prefix = "umbrella_"
+postfix = ""
+
+[struct]
+derive_eq = true
+derive_neq = true
+
+[enum]
+prefix_with_name = true
+
+[defines]
+"feature = maya_bindings" = "MAYA_BINDINGS_ENABLED"

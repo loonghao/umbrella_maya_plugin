@@ -1,0 +1,335 @@
+name: Build Maya Plugin Cross-Platform
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Build Rust library for all platforms
+  build-rust:
+    name: Build Rust Library
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: umbrella_maya_plugin.dll
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: libumbrella_maya_plugin.so
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: libumbrella_maya_plugin.dylib
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ matrix.target }}-
+          ${{ runner.os }}-cargo-
+
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Build Rust library
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Generate C bindings
+      run: |
+        cargo install cbindgen
+        cbindgen --config cbindgen.toml --crate umbrella_maya_plugin --output umbrella_maya_plugin.h
+
+    - name: Upload Rust artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: rust-${{ matrix.target }}
+        path: |
+          target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          umbrella_maya_plugin.h
+        retention-days: 7
+
+  # Build Maya C++ Plugin using Maya DevKit
+  build-maya-plugin:
+    name: Build Maya Plugin
+    needs: build-rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            maya_version: "2018"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+            devkit_platform: "win"
+          - os: windows-latest
+            maya_version: "2020"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+            devkit_platform: "win"
+          - os: windows-latest
+            maya_version: "2022"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+            devkit_platform: "win"
+          - os: windows-latest
+            maya_version: "2023"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+            devkit_platform: "win"
+          - os: windows-latest
+            maya_version: "2024"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+            devkit_platform: "win"
+          # Linux builds
+          - os: ubuntu-latest
+            maya_version: "2020"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+            devkit_platform: "linux"
+          - os: ubuntu-latest
+            maya_version: "2022"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+            devkit_platform: "linux"
+          - os: ubuntu-latest
+            maya_version: "2023"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+            devkit_platform: "linux"
+          - os: ubuntu-latest
+            maya_version: "2024"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+            devkit_platform: "linux"
+          # macOS builds
+          - os: macos-latest
+            maya_version: "2020"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+            devkit_platform: "osx"
+          - os: macos-latest
+            maya_version: "2022"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+            devkit_platform: "osx"
+          - os: macos-latest
+            maya_version: "2023"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+            devkit_platform: "osx"
+          - os: macos-latest
+            maya_version: "2024"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+            devkit_platform: "osx"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download Rust artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: rust-${{ matrix.target }}
+        path: rust-artifacts/
+
+    - name: Cache Maya DevKit
+      id: cache-devkit
+      uses: actions/cache@v3
+      with:
+        path: maya-devkit
+        key: maya-devkit-${{ runner.os }}-v1
+
+    - name: Download Maya DevKit
+      if: steps.cache-devkit.outputs.cache-hit != 'true'
+      run: |
+        # Download Maya DevKit from GitHub
+        curl -L https://github.com/sonictk/Maya-devkit/archive/refs/heads/master.zip -o maya-devkit.zip
+        unzip maya-devkit.zip
+        mv Maya-devkit-master maya-devkit
+
+    - name: Setup build environment
+      run: |
+        # Copy Rust artifacts to expected location
+        mkdir -p target/${{ matrix.target }}/release
+        cp rust-artifacts/* target/${{ matrix.target }}/release/ || true
+
+        # Create build include directory
+        mkdir -p build/include
+        cp rust-artifacts/umbrella_maya_plugin.h build/include/ || true
+
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G "${{ matrix.cmake_generator }}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DMAYA_VERSION=${{ matrix.maya_version }} \
+          -DMAYA_ROOT_DIR="${{ github.workspace }}/maya-devkit/${{ matrix.devkit_platform }}" \
+          -DRUST_TARGET=${{ matrix.target }} \
+          -DBUILD_TESTS=OFF
+
+    - name: Build Maya Plugin
+      run: cmake --build build --config Release
+
+    - name: Package artifacts
+      run: |
+        mkdir -p dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+
+        # Copy plugin files
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          find build -name "*.mll" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+          find target -name "*.dll" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          find build -name "*.bundle" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+          find target -name "*.dylib" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+        else
+          find build -name "*.so" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+          find target -name "*.so" | while read file; do
+            cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+          done
+        fi
+
+        # Create version info
+        echo "Maya Version: ${{ matrix.maya_version }}" > dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Platform: ${{ matrix.artifact_suffix }}" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Build Date: $(date)" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+
+    - name: Upload Maya Plugin
+      uses: actions/upload-artifact@v3
+      with:
+        name: maya-plugin-${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+        path: dist/
+        retention-days: 30
+
+  # Create release packages
+  create-release:
+    name: Create Release
+    needs: [build-rust, build-maya-plugin]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Create release packages
+      run: |
+        mkdir -p release-packages
+
+        # Package each Maya version and platform
+        for maya_version in 2018 2020 2022 2023 2024; do
+          for platform in win64 linux64 macos; do
+            artifact_dir="maya-plugin-${maya_version}-${platform}"
+            if [ -d "$artifact_dir" ]; then
+              cd "$artifact_dir"
+              zip -r "../release-packages/UmbrellaMayaPlugin-${GITHUB_REF_NAME}-Maya${maya_version}-${platform}.zip" .
+              cd ..
+            fi
+          done
+        done
+
+        # Create combined package
+        mkdir -p combined-package
+        for artifact_dir in maya-plugin-*; do
+          if [ -d "$artifact_dir" ]; then
+            cp -r "$artifact_dir"/* combined-package/ || true
+          fi
+        done
+
+        cd combined-package
+        zip -r "../release-packages/UmbrellaMayaPlugin-${GITHUB_REF_NAME}-All-Platforms.zip" .
+        cd ..
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release-packages/*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+        body: |
+          ## Umbrella Maya Plugin Release
+
+          ### Supported Maya Versions
+          - Maya 2018, 2020, 2022, 2023, 2024
+
+          ### Supported Platforms
+          - Windows 64-bit
+          - Linux 64-bit
+          - macOS
+
+          ### Installation
+          1. Download the appropriate package for your Maya version and platform
+          2. Extract to your Maya plugins directory
+          3. Load the plugin in Maya Plugin Manager
+
+          ### Usage
+          ```mel
+          // Load the plugin
+          loadPlugin "UmbrellaMayaPlugin";
+
+          // Show plugin information
+          umbrellaInfo;
+
+          // Scan current scene
+          umbrellaScanScene;
+          ```

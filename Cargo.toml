@@ -1,0 +1,70 @@
+[package]
+name = "umbrella_maya_plugin"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maya Umbrella Team", "loonghao <hal.long@outlook.com>"]
+description = "High-performance Rust implementation of maya_umbrella - Maya antivirus plugin that bypasses Python security restrictions"
+license = "MIT"
+repository = "https://github.com/loonghao/maya_umbrella"
+homepage = "https://github.com/loonghao/maya_umbrella"
+keywords = ["maya", "antivirus", "security", "plugin", "rust"]
+categories = ["multimedia", "development-tools"]
+
+[lib]
+name = "umbrella_maya_plugin"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "cargo-maya-build"
+path = "src/bin/cargo-maya-build.rs"
+
+[dependencies]
+libc = "0.2"
+thiserror = "2.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+# Build tool dependencies
+clap = { version = "4.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json"] }
+zip = "4.0.0"
+walkdir = "2.0"
+colored = "3.0"
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
+async-fs = "2.1"
+flate2 = "1.0"
+tar = "0.4"
+toml = "0.8"
+
+[build-dependencies]
+bindgen = "0.71"
+cc = "1.2"
+cbindgen = "0.29"
+
+[features]
+default = []
+maya_bindings = []
+# Maya version features
+maya2018 = ["maya_bindings"]
+maya2019 = ["maya_bindings"]
+maya2020 = ["maya_bindings"]
+maya2021 = ["maya_bindings"]
+maya2022 = ["maya_bindings"]
+maya2023 = ["maya_bindings"]
+maya2024 = ["maya_bindings"]
+maya2025 = ["maya_bindings"]
+maya2026 = ["maya_bindings"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true

@@ -1,0 +1,405 @@
+name: Build Python Maya Plugin
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Build Rust library as shared library
+  build-rust-library:
+    name: Build Rust Library
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            lib_name: umbrella_maya_plugin.dll
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            lib_name: libumbrella_maya_plugin.so
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            lib_name: libumbrella_maya_plugin.dylib
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build Rust library
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Upload Rust library
+      uses: actions/upload-artifact@v3
+      with:
+        name: rust-lib-${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
+
+  # Create Python plugin package
+  build-python-plugin:
+    name: Build Python Plugin
+    needs: build-rust-library
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        maya_version: [2022, 2023, 2024, 2025, 2026]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Download all Rust libraries
+      uses: actions/download-artifact@v3
+
+    - name: Create Python plugin structure
+      run: |
+        mkdir -p umbrella_maya_plugin/maya${{ matrix.maya_version }}
+        mkdir -p umbrella_maya_plugin/maya${{ matrix.maya_version }}/lib
+        mkdir -p umbrella_maya_plugin/maya${{ matrix.maya_version }}/scripts
+        mkdir -p umbrella_maya_plugin/maya${{ matrix.maya_version }}/plug-ins
+
+    - name: Copy Rust libraries
+      run: |
+        # Copy Windows library
+        if [ -d "rust-lib-x86_64-pc-windows-msvc" ]; then
+          cp rust-lib-x86_64-pc-windows-msvc/* umbrella_maya_plugin/maya${{ matrix.maya_version }}/lib/
+        fi
+        
+        # Copy Linux library
+        if [ -d "rust-lib-x86_64-unknown-linux-gnu" ]; then
+          cp rust-lib-x86_64-unknown-linux-gnu/* umbrella_maya_plugin/maya${{ matrix.maya_version }}/lib/
+        fi
+        
+        # Copy macOS library
+        if [ -d "rust-lib-x86_64-apple-darwin" ]; then
+          cp rust-lib-x86_64-apple-darwin/* umbrella_maya_plugin/maya${{ matrix.maya_version }}/lib/
+        fi
+
+    - name: Create Python plugin wrapper
+      run: |
+        cat > umbrella_maya_plugin/maya${{ matrix.maya_version }}/plug-ins/umbrella_maya_plugin.py << 'EOF'
+        """
+        Umbrella Maya Plugin - Python Wrapper
+        
+        This plugin provides antivirus protection for Maya environments
+        by calling into a Rust library through ctypes.
+        """
+        
+        import os
+        import sys
+        import ctypes
+        import platform
+        from ctypes import c_char_p, c_int, Structure, POINTER
+        
+        import maya.api.OpenMaya as om
+        import maya.cmds as cmds
+        
+        # Plugin information
+        kPluginName = "UmbrellaMayaPlugin"
+        kPluginVersion = "1.0.0"
+        kPluginVendor = "Umbrella Security Team"
+        
+        # Global library handle
+        _umbrella_lib = None
+        
+        def maya_useNewAPI():
+            """Tell Maya to use the new API."""
+            pass
+        
+        class UmbrellaLib:
+            """Wrapper for Rust library functions."""
+            
+            def __init__(self):
+                self.lib = None
+                self._load_library()
+            
+            def _load_library(self):
+                """Load the appropriate Rust library for the current platform."""
+                plugin_dir = os.path.dirname(__file__)
+                lib_dir = os.path.join(os.path.dirname(plugin_dir), "lib")
+                
+                system = platform.system()
+                if system == "Windows":
+                    lib_name = "umbrella_maya_plugin.dll"
+                elif system == "Darwin":
+                    lib_name = "libumbrella_maya_plugin.dylib"
+                else:
+                    lib_name = "libumbrella_maya_plugin.so"
+                
+                lib_path = os.path.join(lib_dir, lib_name)
+                
+                if not os.path.exists(lib_path):
+                    raise RuntimeError(f"Umbrella library not found: {lib_path}")
+                
+                try:
+                    self.lib = ctypes.CDLL(lib_path)
+                    self._setup_functions()
+                except Exception as e:
+                    raise RuntimeError(f"Failed to load Umbrella library: {e}")
+            
+            def _setup_functions(self):
+                """Setup function signatures for the Rust library."""
+                # umbrella_scan_file function
+                self.lib.umbrella_scan_file.argtypes = [c_char_p]
+                self.lib.umbrella_scan_file.restype = c_int
+                
+                # umbrella_scan_directory function
+                self.lib.umbrella_scan_directory.argtypes = [c_char_p]
+                self.lib.umbrella_scan_directory.restype = c_int
+                
+                # umbrella_get_version function
+                self.lib.umbrella_get_version.argtypes = []
+                self.lib.umbrella_get_version.restype = c_char_p
+            
+            def scan_file(self, file_path):
+                """Scan a file for threats."""
+                if not self.lib:
+                    return -1
+                
+                path_bytes = file_path.encode('utf-8')
+                return self.lib.umbrella_scan_file(path_bytes)
+            
+            def scan_directory(self, dir_path):
+                """Scan a directory for threats."""
+                if not self.lib:
+                    return -1
+                
+                path_bytes = dir_path.encode('utf-8')
+                return self.lib.umbrella_scan_directory(path_bytes)
+            
+            def get_version(self):
+                """Get library version."""
+                if not self.lib:
+                    return "Unknown"
+                
+                version_ptr = self.lib.umbrella_get_version()
+                if version_ptr:
+                    return version_ptr.decode('utf-8')
+                return "Unknown"
+        
+        # Command implementations
+        class UmbrellaScanFileCommand(om.MPxCommand):
+            """Command to scan a file for threats."""
+            
+            kPluginCmdName = "umbrellaScanFile"
+            
+            def __init__(self):
+                om.MPxCommand.__init__(self)
+            
+            @staticmethod
+            def cmdCreator():
+                return UmbrellaScanFileCommand()
+            
+            def doIt(self, args):
+                global _umbrella_lib
+                
+                if not _umbrella_lib:
+                    om.MGlobal.displayError("Umbrella library not initialized")
+                    return
+                
+                # Get file path from arguments
+                if len(args) > 0:
+                    file_path = args.asString(0)
+                else:
+                    # Use current scene
+                    file_path = cmds.file(query=True, sceneName=True)
+                    if not file_path:
+                        om.MGlobal.displayError("No file specified and no current scene")
+                        return
+                
+                # Perform scan
+                threats = _umbrella_lib.scan_file(file_path)
+                
+                # Display results
+                if threats > 0:
+                    om.MGlobal.displayWarning(f"⚠️ {threats} threats detected in: {file_path}")
+                elif threats == 0:
+                    om.MGlobal.displayInfo(f"✅ No threats detected in: {file_path}")
+                else:
+                    om.MGlobal.displayError(f"❌ Scan failed for: {file_path}")
+        
+        class UmbrellaInfoCommand(om.MPxCommand):
+            """Command to display plugin information."""
+            
+            kPluginCmdName = "umbrellaInfo"
+            
+            def __init__(self):
+                om.MPxCommand.__init__(self)
+            
+            @staticmethod
+            def cmdCreator():
+                return UmbrellaInfoCommand()
+            
+            def doIt(self, args):
+                global _umbrella_lib
+                
+                info = f"""
+        === Umbrella Maya Plugin Information ===
+        Plugin Name: {kPluginName}
+        Version: {kPluginVersion}
+        Vendor: {kPluginVendor}
+        Library Version: {_umbrella_lib.get_version() if _umbrella_lib else 'Not loaded'}
+        
+        Available Commands:
+          umbrellaScanFile [path]  - Scan a specific file
+          umbrellaInfo            - Show this information
+        
+        🛡️ Protecting your Maya environment!
+                """
+                om.MGlobal.displayInfo(info)
+        
+        def initializePlugin(plugin):
+            """Initialize the plugin."""
+            global _umbrella_lib
+            
+            pluginFn = om.MFnPlugin(plugin, kPluginVendor, kPluginVersion)
+            
+            try:
+                # Initialize Rust library
+                _umbrella_lib = UmbrellaLib()
+                
+                # Register commands
+                pluginFn.registerCommand(
+                    UmbrellaScanFileCommand.kPluginCmdName,
+                    UmbrellaScanFileCommand.cmdCreator
+                )
+                
+                pluginFn.registerCommand(
+                    UmbrellaInfoCommand.kPluginCmdName,
+                    UmbrellaInfoCommand.cmdCreator
+                )
+                
+                om.MGlobal.displayInfo("🛡️ Umbrella Maya Plugin loaded successfully!")
+                
+            except Exception as e:
+                om.MGlobal.displayError(f"Failed to initialize Umbrella plugin: {e}")
+                raise
+        
+        def uninitializePlugin(plugin):
+            """Uninitialize the plugin."""
+            global _umbrella_lib
+            
+            pluginFn = om.MFnPlugin(plugin)
+            
+            try:
+                # Unregister commands
+                pluginFn.deregisterCommand(UmbrellaScanFileCommand.kPluginCmdName)
+                pluginFn.deregisterCommand(UmbrellaInfoCommand.kPluginCmdName)
+                
+                # Cleanup library
+                _umbrella_lib = None
+                
+                om.MGlobal.displayInfo("Umbrella Maya Plugin unloaded")
+                
+            except Exception as e:
+                om.MGlobal.displayError(f"Failed to uninitialize Umbrella plugin: {e}")
+                raise
+        EOF
+
+    - name: Create module file
+      run: |
+        cat > umbrella_maya_plugin/maya${{ matrix.maya_version }}/umbrella_maya_plugin.mod << EOF
+        + UmbrellaMayaPlugin 1.0.0 ./
+        PYTHONPATH+:=scripts
+        MAYA_PLUG_IN_PATH+:=plug-ins
+        EOF
+
+    - name: Create installation script
+      run: |
+        cat > umbrella_maya_plugin/install.py << 'EOF'
+        #!/usr/bin/env python
+        """
+        Umbrella Maya Plugin Installer
+        """
+        
+        import os
+        import sys
+        import shutil
+        import platform
+        
+        def get_maya_app_dir():
+            """Get Maya application directory."""
+            system = platform.system()
+            if system == "Windows":
+                return os.path.expanduser("~/Documents/maya")
+            elif system == "Darwin":
+                return os.path.expanduser("~/Library/Preferences/Autodesk/maya")
+            else:
+                return os.path.expanduser("~/maya")
+        
+        def install_plugin(maya_version):
+            """Install plugin for specific Maya version."""
+            maya_app_dir = get_maya_app_dir()
+            modules_dir = os.path.join(maya_app_dir, maya_version, "modules")
+            
+            if not os.path.exists(modules_dir):
+                os.makedirs(modules_dir)
+            
+            # Copy module file
+            src_mod = f"maya{maya_version}/umbrella_maya_plugin.mod"
+            dst_mod = os.path.join(modules_dir, "umbrella_maya_plugin.mod")
+            
+            if os.path.exists(src_mod):
+                shutil.copy2(src_mod, dst_mod)
+                print(f"✅ Installed module file for Maya {maya_version}")
+            
+            # Copy plugin directory
+            src_dir = f"maya{maya_version}"
+            dst_dir = os.path.join(modules_dir, "umbrella_maya_plugin")
+            
+            if os.path.exists(dst_dir):
+                shutil.rmtree(dst_dir)
+            
+            shutil.copytree(src_dir, dst_dir)
+            print(f"✅ Installed plugin files for Maya {maya_version}")
+        
+        if __name__ == "__main__":
+            maya_versions = ["2022", "2023", "2024", "2025", "2026"]
+            
+            for version in maya_versions:
+                if os.path.exists(f"maya{version}"):
+                    try:
+                        install_plugin(version)
+                    except Exception as e:
+                        print(f"❌ Failed to install for Maya {version}: {e}")
+            
+            print("\n🛡️ Umbrella Maya Plugin installation complete!")
+            print("Restart Maya and load the plugin from the Plugin Manager.")
+        EOF
+
+    - name: Package Python plugin
+      run: |
+        zip -r umbrella_maya_plugin_python_maya${{ matrix.maya_version }}.zip umbrella_maya_plugin/
+
+    - name: Upload Python plugin
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-plugin-maya${{ matrix.maya_version }}
+        path: umbrella_maya_plugin_python_maya${{ matrix.maya_version }}.zip
+        retention-days: 30
