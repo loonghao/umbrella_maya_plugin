@@ -1,0 +1,247 @@
+name: Build Maya Plugin (Minimal SDK)
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Build Rust library for all platforms
+  build-rust:
+    name: Build Rust Library
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: umbrella_maya_plugin.dll
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: libumbrella_maya_plugin.so
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: libumbrella_maya_plugin.dylib
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build Rust library
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Generate C bindings
+      run: |
+        cargo install cbindgen
+        cbindgen --config cbindgen.toml --crate umbrella_maya_plugin --output umbrella_maya_plugin.h
+
+    - name: Upload Rust artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: rust-${{ matrix.target }}
+        path: |
+          target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          umbrella_maya_plugin.h
+
+  # Build Maya plugin with minimal SDK simulation
+  build-maya-plugin:
+    name: Build Maya Plugin
+    needs: build-rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            maya_version: "2022"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2023"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2024"
+            target: x86_64-pc-windows-msvc
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          # Linux builds
+          - os: ubuntu-latest
+            maya_version: "2022"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2023"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2024"
+            target: x86_64-unknown-linux-gnu
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          # macOS builds
+          - os: macos-latest
+            maya_version: "2022"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2023"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2024"
+            target: x86_64-apple-darwin
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download Rust artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: rust-${{ matrix.target }}
+        path: rust-artifacts/
+
+    - name: Setup Minimal Maya SDK Headers
+      run: |
+        mkdir -p maya-sdk/${{ matrix.maya_version }}/include/maya
+        mkdir -p maya-sdk/${{ matrix.maya_version }}/lib
+        
+        # Create minimal Maya headers for compilation
+        cat > maya-sdk/${{ matrix.maya_version }}/include/maya/MTypes.h << 'EOF'
+        #ifndef _MTypes
+        #define _MTypes
+        #define MAYA_API_VERSION ${{ matrix.maya_version }}00
+        typedef int MStatus;
+        namespace MS { const MStatus kSuccess = 0; const MStatus kFailure = 1; }
+        #endif
+        EOF
+        
+        # Create other essential headers with minimal definitions
+        for header in MObject MFnPlugin MPxCommand MArgList MGlobal MString MFileIO MSceneMessage MEventMessage MCallbackIdArray MFnDependencyNode MItDependencyNodes MPlug; do
+          cat > maya-sdk/${{ matrix.maya_version }}/include/maya/${header}.h << EOF
+        #ifndef _${header}
+        #define _${header}
+        #include "MTypes.h"
+        class ${header} { public: ${header}() {} };
+        #endif
+        EOF
+        done
+        
+        # Create mock library files
+        touch maya-sdk/${{ matrix.maya_version }}/lib/Foundation.lib
+        touch maya-sdk/${{ matrix.maya_version }}/lib/OpenMaya.lib
+        touch maya-sdk/${{ matrix.maya_version }}/lib/OpenMayaUI.lib
+
+    - name: Setup build environment
+      run: |
+        # Copy Rust artifacts to expected location
+        mkdir -p target/${{ matrix.target }}/release
+        cp rust-artifacts/* target/${{ matrix.target }}/release/ || true
+        
+        # Create build include directory
+        mkdir -p build/include
+        cp rust-artifacts/umbrella_maya_plugin.h build/include/ || true
+
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G "${{ matrix.cmake_generator }}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DMAYA_VERSION=${{ matrix.maya_version }} \
+          -DMAYA_ROOT_DIR="${{ github.workspace }}/maya-sdk/${{ matrix.maya_version }}" \
+          -DRUST_TARGET=${{ matrix.target }} \
+          -DBUILD_TESTS=OFF
+
+    - name: Build Maya Plugin
+      run: cmake --build build --config Release
+
+    - name: Package artifacts
+      run: |
+        mkdir -p dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+        
+        # Copy plugin files
+        find build -name "*.mll" -o -name "*.so" -o -name "*.bundle" | while read file; do
+          cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+        done
+        
+        # Copy Rust library
+        find target -name "*.dll" -o -name "*.so" -o -name "*.dylib" | while read file; do
+          cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+        done
+        
+        # Create version info
+        echo "Maya Version: ${{ matrix.maya_version }}" > dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Platform: ${{ matrix.artifact_suffix }}" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Build Date: $(date)" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/VERSION.txt
+
+    - name: Upload Maya Plugin
+      uses: actions/upload-artifact@v3
+      with:
+        name: maya-plugin-${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+        path: dist/
+        retention-days: 30
+
+  # Create release packages
+  create-release:
+    name: Create Release
+    needs: [build-rust, build-maya-plugin]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      
+    - name: Create release packages
+      run: |
+        mkdir -p release-packages
+        
+        # Package each Maya version
+        for maya_version in 2022 2023 2024; do
+          for platform in win64 linux64 macos; do
+            if [ -d "maya-plugin-${maya_version}-${platform}" ]; then
+              cd "maya-plugin-${maya_version}-${platform}"
+              zip -r "../release-packages/UmbrellaMayaPlugin-${GITHUB_REF_NAME}-Maya${maya_version}-${platform}.zip" .
+              cd ..
+            fi
+          done
+        done
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release-packages/*
+        draft: false
+        prerelease: false
+        generate_release_notes: true

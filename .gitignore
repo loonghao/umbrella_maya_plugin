@@ -1,0 +1,82 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Build artifacts
+/build/
+/build_*/
+/dist/
+*.mll
+*.dll
+*.so
+*.dylib
+*.bundle
+
+# Maya DevKit (downloaded automatically)
+/maya-devkit/
+/Maya-devkit-master/
+maya-devkit.zip
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+!cmake/FindMaya.cmake
+!cmake/linux_plugin.map
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.nox
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Test outputs
+test_output/
+temp_test_files/
+tests/virus/_virus/
+
+# Backup files
+*.bak
+*.backup
+
+# Windows
+*.exe
+*.pdb
+*.ilk
+
+# Generated files
+umbrella_maya_plugin.h
+wrapper.h
+
+# Python
+*.py[cod]
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+/venv/
+venv_python
+.coverage
+coverage.xml
+
+# Documentation
+docs_src/_build/
+
+# Misc
+run_pycharm.bat
+.zip

@@ -1,0 +1,215 @@
+name: Build Maya Plugin (With DevKit)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-maya-plugin:
+    name: Build Maya Plugin
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds with official Maya DevKit
+          - os: windows-latest
+            maya_version: "2022"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Windows.zip"
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2023"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2023/Autodesk_Maya_2023_DEVKIT_Windows.zip"
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2024"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Windows.zip"
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2025"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2025/Autodesk_Maya_2025_DEVKIT_Windows.zip"
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          - os: windows-latest
+            maya_version: "2026"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2026/Autodesk_Maya_2026_DEVKIT_Windows.zip"
+            cmake_generator: "Visual Studio 17 2022"
+            artifact_suffix: "win64"
+          # Linux builds with official Maya DevKit
+          - os: ubuntu-latest
+            maya_version: "2022"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Linux.tgz"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2023"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2023/Autodesk_Maya_2023_DEVKIT_Linux.tgz"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2024"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Linux.tgz"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2025"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2025/Autodesk_Maya_2025_DEVKIT_Linux.tgz"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          - os: ubuntu-latest
+            maya_version: "2026"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2026/Autodesk_Maya_2026_DEVKIT_Linux.tgz"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "linux64"
+          # macOS builds with official Maya DevKit
+          - os: macos-latest
+            maya_version: "2022"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2022/Autodesk_Maya_2022_DEVKIT_Mac.dmg"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2023"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2023/Autodesk_Maya_2023_DEVKIT_Mac.dmg"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2024"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2024/Autodesk_Maya_2024_DEVKIT_Mac.dmg"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2025"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2025/Autodesk_Maya_2025_DEVKIT_Mac.dmg"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+          - os: macos-latest
+            maya_version: "2026"
+            devkit_url: "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2026/Autodesk_Maya_2026_DEVKIT_Mac.dmg"
+            cmake_generator: "Unix Makefiles"
+            artifact_suffix: "macos"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Maya DevKit
+      id: cache-devkit
+      uses: actions/cache@v3
+      with:
+        path: maya-devkit
+        key: maya-devkit-${{ matrix.maya_version }}-${{ runner.os }}
+
+    - name: Download Maya DevKit
+      if: steps.cache-devkit.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "Downloading Maya DevKit from: ${{ matrix.devkit_url }}"
+
+        # Determine file extension and download
+        if [[ "${{ matrix.devkit_url }}" == *.zip ]]; then
+          curl -L "${{ matrix.devkit_url }}" -o maya-devkit.zip
+          unzip -q maya-devkit.zip
+          # Find the extracted directory (usually starts with devkit or Maya)
+          extracted_dir=$(find . -maxdepth 1 -type d -name "*devkit*" -o -name "*Maya*" | head -1)
+          if [ -n "$extracted_dir" ]; then
+            mv "$extracted_dir" maya-devkit
+          else
+            echo "Warning: Could not find extracted DevKit directory"
+            ls -la
+          fi
+        elif [[ "${{ matrix.devkit_url }}" == *.tgz ]]; then
+          curl -L "${{ matrix.devkit_url }}" -o maya-devkit.tgz
+          tar -xzf maya-devkit.tgz
+          # Find the extracted directory
+          extracted_dir=$(find . -maxdepth 1 -type d -name "*devkit*" -o -name "*Maya*" | head -1)
+          if [ -n "$extracted_dir" ]; then
+            mv "$extracted_dir" maya-devkit
+          else
+            echo "Warning: Could not find extracted DevKit directory"
+            ls -la
+          fi
+        elif [[ "${{ matrix.devkit_url }}" == *.dmg ]]; then
+          curl -L "${{ matrix.devkit_url }}" -o maya-devkit.dmg
+          # Mount DMG and copy contents (macOS only)
+          hdiutil attach maya-devkit.dmg -mountpoint /tmp/maya-devkit-mount
+          cp -r /tmp/maya-devkit-mount/* ./
+          hdiutil detach /tmp/maya-devkit-mount
+          # Find the extracted directory
+          extracted_dir=$(find . -maxdepth 1 -type d -name "*devkit*" -o -name "*Maya*" | head -1)
+          if [ -n "$extracted_dir" ]; then
+            mv "$extracted_dir" maya-devkit
+          else
+            echo "Warning: Could not find extracted DevKit directory"
+            ls -la
+          fi
+        else
+          echo "Error: Unsupported file format for DevKit URL"
+          exit 1
+        fi
+
+        echo "Maya DevKit extracted successfully"
+        ls -la maya-devkit/
+
+    - name: Setup Maya SDK paths
+      run: |
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          echo "MAYA_INCLUDE_DIR=${{ github.workspace }}/maya-devkit/win/include" >> $GITHUB_ENV
+          echo "MAYA_LIBRARY_DIR=${{ github.workspace }}/maya-devkit/win/lib" >> $GITHUB_ENV
+        elif [ "${{ runner.os }}" == "Linux" ]; then
+          echo "MAYA_INCLUDE_DIR=${{ github.workspace }}/maya-devkit/linux/include" >> $GITHUB_ENV
+          echo "MAYA_LIBRARY_DIR=${{ github.workspace }}/maya-devkit/linux/lib" >> $GITHUB_ENV
+        else
+          echo "MAYA_INCLUDE_DIR=${{ github.workspace }}/maya-devkit/osx/include" >> $GITHUB_ENV
+          echo "MAYA_LIBRARY_DIR=${{ github.workspace }}/maya-devkit/osx/lib" >> $GITHUB_ENV
+        fi
+
+    - name: Build Rust library
+      run: cargo build --release
+
+    - name: Generate C bindings
+      run: |
+        cargo install cbindgen
+        cbindgen --config cbindgen.toml --crate umbrella_maya_plugin --output build/include/umbrella_maya_plugin.h
+
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G "${{ matrix.cmake_generator }}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DMAYA_VERSION=${{ matrix.maya_version }} \
+          -DMAYA_ROOT_DIR="${{ github.workspace }}/maya-devkit" \
+          -DBUILD_TESTS=OFF
+
+    - name: Build Maya Plugin
+      run: cmake --build build --config Release
+
+    - name: Package artifacts
+      run: |
+        mkdir -p dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+        
+        # Copy built files
+        find build -name "*.mll" -o -name "*.so" -o -name "*.bundle" | while read file; do
+          cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+        done
+        
+        find target/release -name "*.dll" -o -name "*.so" -o -name "*.dylib" | while read file; do
+          cp "$file" dist/maya${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}/ || true
+        done
+
+    - name: Upload Maya Plugin
+      uses: actions/upload-artifact@v3
+      with:
+        name: maya-plugin-${{ matrix.maya_version }}-${{ matrix.artifact_suffix }}
+        path: dist/
+        retention-days: 30

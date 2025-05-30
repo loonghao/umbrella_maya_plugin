@@ -1,0 +1,50 @@
+# Cargo configuration for Umbrella Maya Plugin
+# This file configures default build targets and settings for the project
+
+# [build]
+# Uncomment and set target if you want to force a specific target
+# target = "x86_64-pc-windows-msvc"
+
+# [target.x86_64-pc-windows-msvc]
+# Windows-specific linker settings (commented out to avoid issues)
+# rustflags = [
+#     "-C", "target-feature=+crt-static",  # Static linking for better compatibility
+# ]
+
+# [target.x86_64-unknown-linux-gnu]
+# Linux-specific settings (commented out to avoid issues)
+# rustflags = [
+#     "-C", "link-arg=-Wl,-rpath,$ORIGIN",  # Set rpath for shared libraries
+# ]
+
+# [target.x86_64-apple-darwin]
+# macOS-specific settings (commented out to avoid issues)
+# rustflags = [
+#     "-C", "link-arg=-Wl,-rpath,@loader_path",  # Set rpath for shared libraries
+# ]
+
+# Environment variables for build scripts
+[env]
+# Ensure we use the correct Maya DevKit path
+MAYA_DEVKIT_PATH = { value = "./maya-devkit", relative = true }
+
+# Build optimization settings
+[profile.release]
+# Optimize for size and performance
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Faster debug builds
+opt-level = 0
+debug = true
+overflow-checks = true
+
+# Alias for common build commands
+[alias]
+maya-build = "run --bin cargo-maya-build --"
+build-windows = "build --target x86_64-pc-windows-msvc --release"
+build-linux = "build --target x86_64-unknown-linux-gnu --release"
+build-macos = "build --target x86_64-apple-darwin --release"

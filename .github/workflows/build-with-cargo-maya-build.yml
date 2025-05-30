@@ -1,0 +1,164 @@
+name: Build Maya Plugin (Cargo Maya Build)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-maya-plugin:
+    name: Build Maya Plugin
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows builds
+          - os: windows-latest
+            platform: windows
+            maya_versions: "2022,2023,2024,2025,2026"
+          # Linux builds  
+          - os: ubuntu-latest
+            platform: linux
+            maya_versions: "2022,2023,2024,2025,2026"
+          # macOS builds
+          - os: macos-latest
+            platform: macos
+            maya_versions: "2022,2023,2024,2025,2026"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: |
+          x86_64-pc-windows-msvc
+          x86_64-unknown-linux-gnu
+          x86_64-apple-darwin
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Cache Maya DevKit
+      uses: actions/cache@v3
+      with:
+        path: maya-devkit
+        key: maya-devkit-official-${{ matrix.platform }}-${{ hashFiles('maya-devkit-config.toml') }}
+
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+
+    - name: Install system dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake
+
+    - name: Build cargo-maya-build tool
+      run: cargo build --bin cargo-maya-build --release
+
+    - name: Build Maya plugins for all versions
+      shell: bash
+      run: |
+        # Split maya_versions by comma and build each version
+        IFS=',' read -ra VERSIONS <<< "${{ matrix.maya_versions }}"
+        for version in "${VERSIONS[@]}"; do
+          echo "Building Maya plugin for ${{ matrix.platform }} Maya $version"
+          cargo run --bin cargo-maya-build -- \
+            --platform ${{ matrix.platform }} \
+            --maya-version "$version" \
+            --verbose
+        done
+
+    - name: List build artifacts
+      run: |
+        echo "Build artifacts:"
+        if [ -d "dist" ]; then
+          find dist -type f -name "*" | head -20
+        else
+          echo "No dist directory found"
+        fi
+
+    - name: Upload Maya Plugin Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: maya-plugin-${{ matrix.platform }}
+        path: dist/
+        retention-days: 30
+
+  create-release:
+    name: Create Release
+    needs: build-maya-plugin
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+
+    - name: Create release archives
+      run: |
+        cd artifacts
+        for platform in windows linux macos; do
+          if [ -d "maya-plugin-$platform" ]; then
+            tar -czf "umbrella-maya-plugin-$platform.tar.gz" "maya-plugin-$platform"
+          fi
+        done
+
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/*.tar.gz
+        generate_release_notes: true
+        body: |
+          ## Umbrella Maya Plugin Release
+
+          Built using official Autodesk Maya DevKit with `cargo maya-build` tool.
+
+          ### Supported Maya Versions
+          - Maya 2022, 2023, 2024, 2025, 2026
+
+          ### Supported Platforms
+          - Windows 64-bit
+          - Linux 64-bit
+          - macOS
+
+          ### Installation
+          1. Download the appropriate package for your platform
+          2. Extract to your Maya plugins directory
+          3. Load the plugin in Maya Plugin Manager
+
+          ### Usage
+          ```mel
+          // Load the plugin
+          loadPlugin "UmbrellaMayaPlugin";
+
+          // Show plugin information
+          umbrellaInfo;
+
+          // Scan current scene
+          umbrellaScanScene;
+          ```
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

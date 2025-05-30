@@ -1,0 +1,7 @@
+{
+    global:
+        initializePlugin;
+        uninitializePlugin;
+    local:
+        *;
+};
