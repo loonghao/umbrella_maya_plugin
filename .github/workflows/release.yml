@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Upload artifacts to the GitHub Release for the selected tag/ref"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  MAYA_DEVKIT_URL_2018_WINDOWS: ${{ secrets.MAYA_DEVKIT_URL_2018_WINDOWS }}
+  MAYA_DEVKIT_URL_2018_LINUX: ${{ secrets.MAYA_DEVKIT_URL_2018_LINUX }}
+  MAYA_DEVKIT_URL_2018_MACOS: ${{ secrets.MAYA_DEVKIT_URL_2018_MACOS }}
+  MAYA_DEVKIT_URL_2021_WINDOWS: ${{ secrets.MAYA_DEVKIT_URL_2021_WINDOWS }}
+  MAYA_DEVKIT_URL_2021_LINUX: ${{ secrets.MAYA_DEVKIT_URL_2021_LINUX }}
+  MAYA_DEVKIT_URL_2021_MACOS: ${{ secrets.MAYA_DEVKIT_URL_2021_MACOS }}
+
+jobs:
+  build:
+    name: Maya ${{ matrix.maya_version }} ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        maya_version: ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
+        platform:
+          - name: windows
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+          - name: linux
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+          - name: macos
+            os: macos-15-intel
+            rust_target: x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+
+      - uses: loonghao/vx@v0.8.36
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: maya-${{ matrix.platform.name }}-${{ matrix.maya_version }}
+          shared-key: maya-${{ matrix.platform.name }}-${{ matrix.maya_version }}
+
+      - name: Cache Maya DevKit
+        uses: actions/cache@v4
+        with:
+          path: maya-devkit
+          key: maya-devkit-${{ matrix.platform.name }}-${{ matrix.maya_version }}-${{ hashFiles('maya-devkit-config.toml') }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake || true
+
+      - name: Build Maya module package
+        run: vx just package ${{ matrix.maya_version }}
+
+      - name: Validate Maya module package
+        shell: pwsh
+        run: scripts/test-maya-artifacts.ps1 -MayaVersion ${{ matrix.maya_version }} -Platform ${{ matrix.platform.name }}
+
+      - name: Build CLI
+        run: vx just build-cli
+
+      - name: Build Python extension
+        run: vx just build-pyd
+
+      - name: Stage release package
+        shell: pwsh
+        run: scripts/stage-release-package.ps1 -MayaVersion ${{ matrix.maya_version }} -Platform ${{ matrix.platform.name }}
+
+      - name: Validate release archive
+        shell: pwsh
+        run: scripts/test-maya-artifacts.ps1 -MayaVersion ${{ matrix.maya_version }} -Platform ${{ matrix.platform.name }} -RequireReleaseArchive
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UmbrellaMayaPlugin-maya${{ matrix.maya_version }}-${{ matrix.platform.name }}
+          path: dist/release/*.zip
+          retention-days: 30
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release == true)
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/release/*.zip
+          generate_release_notes: true

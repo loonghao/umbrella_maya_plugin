@@ -70,8 +70,12 @@ endif()
 if(MAYA_ROOT_DIR AND EXISTS "${MAYA_ROOT_DIR}/include/maya/MFn.h")
     get_filename_component(MAYA_INCLUDE_DIR "${MAYA_ROOT_DIR}/include" ABSOLUTE)
     get_filename_component(MAYA_LIBRARY_DIR "${MAYA_ROOT_DIR}/lib" ABSOLUTE)
-    set(MAYA_USING_DEVKIT TRUE)
-    message(STATUS "Using Maya DevKit from MAYA_ROOT_DIR: ${MAYA_ROOT_DIR}")
+    if(NOT EXISTS "${MAYA_LIBRARY_DIR}")
+        set(MAYA_USING_DEVKIT TRUE)
+        message(STATUS "Using Maya DevKit headers from MAYA_ROOT_DIR: ${MAYA_ROOT_DIR}")
+    else()
+        message(STATUS "Using Maya SDK from MAYA_ROOT_DIR: ${MAYA_ROOT_DIR}")
+    endif()
 endif()
 
 # Check if Maya SDK exists (if not using DevKit)
@@ -112,9 +116,9 @@ set(MAYA_CORE_LIBRARIES
     OpenMayaUI
 )
 
-# Find Maya libraries (skip if using DevKit)
+# Find Maya libraries when a library directory is available
 set(MAYA_LIBRARIES "")
-if(NOT MAYA_USING_DEVKIT)
+if(EXISTS "${MAYA_LIBRARY_DIR}")
     foreach(MAYA_LIB ${MAYA_CORE_LIBRARIES})
         find_library(MAYA_${MAYA_LIB}_LIBRARY
             NAMES ${MAYA_LIB}
@@ -129,7 +133,7 @@ if(NOT MAYA_USING_DEVKIT)
         endif()
     endforeach()
 else()
-    message(STATUS "Using Maya DevKit - no libraries to link")
+    message(STATUS "Maya library directory not found; using headers only")
 endif()
 
 # Maya version detection from headers

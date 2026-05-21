@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "crates/**"
+      - "tests/**"
+      - "scripts/**"
+      - "cmake/**"
+      - "docs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "CMakeLists.txt"
+      - "Justfile"
+      - "cbindgen.toml"
+      - "maya-devkit-config.toml"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "crates/**"
+      - "tests/**"
+      - "scripts/**"
+      - "cmake/**"
+      - "docs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "CMakeLists.txt"
+      - "Justfile"
+      - "cbindgen.toml"
+      - "maya-devkit-config.toml"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy, rustfmt
+
+      - uses: loonghao/vx@v0.8.36
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-${{ runner.os }}
+          shared-key: rust-${{ runner.os }}
+
+      - name: Preflight
+        run: vx just preflight
+
+      - name: Install cargo-llvm-cov
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Coverage
+        if: runner.os == 'Linux'
+        run: vx just coverage
+
+      - name: Upload coverage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-lcov
+          path: coverage/lcov.info
+
+      - name: Upload Python extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-extension-${{ runner.os }}
+          path: dist/python/**
+
+      - name: Upload CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: umbrella-maya-cli-${{ runner.os }}
+          path: |
+            target/release/umbrella-maya*
+            target/release/umbrella-maya.exe
+
+  maya-plugin:
+    name: Maya Plugin (${{ matrix.platform.name }} Maya 2024)
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: windows
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+          - name: linux
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+          - name: macos
+            os: macos-15-intel
+            rust_target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.platform.rust_target }}
+
+      - uses: loonghao/vx@v0.8.36
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: maya-plugin-${{ matrix.platform.name }}-2024
+          shared-key: maya-plugin-${{ matrix.platform.name }}-2024
+
+      - name: Cache Maya DevKit
+        uses: actions/cache@v4
+        with:
+          path: maya-devkit
+          key: maya-devkit-${{ matrix.platform.name }}-2024-${{ hashFiles('maya-devkit-config.toml') }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake || true
+
+      - name: Build Maya module package
+        run: vx just package 2024
+
+      - name: Validate Maya plugin artifacts
+        shell: pwsh
+        run: scripts/test-maya-artifacts.ps1 -MayaVersion 2024 -Platform ${{ matrix.platform.name }}
+
+      - name: Upload Maya plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maya-plugin-2024-${{ matrix.platform.name }}
+          path: |
+            dist/maya2024-${{ matrix.platform.name }}/**
+            dist/modules/*maya2024-${{ matrix.platform.name }}/**

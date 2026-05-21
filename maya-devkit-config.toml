@@ -7,7 +7,7 @@
 base_url = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya"
 
 # Supported Maya versions
-supported_versions = ["2022", "2023", "2024", "2025", "2026"]
+supported_versions = ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
 
 # Platform mappings
 [devkit.platforms]
@@ -17,6 +17,28 @@ macos = "Mac"
 
 # DevKit URLs for each version and platform
 [devkit.urls]
+
+# Maya 2018
+# Public Autodesk S3 URLs for Maya 2018 currently return 403.
+# CI supports this version through secrets/environment overrides:
+# MAYA_DEVKIT_URL_2018_WINDOWS, MAYA_DEVKIT_URL_2018_LINUX, MAYA_DEVKIT_URL_2018_MACOS.
+
+# Maya 2019
+[devkit.urls."2019"]
+windows = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2019/Autodesk_Maya_2019_DEVKIT_Windows.zip"
+linux = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2019/Autodesk_Maya_2019_DEVKIT_Linux.tgz"
+macos = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2019/Autodesk_Maya_2019_DEVKIT_Mac.dmg"
+
+# Maya 2020
+[devkit.urls."2020"]
+windows = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2020/Autodesk_Maya_2020_DEVKIT_Windows.zip"
+linux = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2020/Autodesk_Maya_2020_DEVKIT_Linux.tgz"
+macos = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2020/Autodesk_Maya_2020_DEVKIT_Mac.dmg"
+
+# Maya 2021
+# Public Autodesk S3 URLs for Maya 2021 currently return 403.
+# CI supports this version through secrets/environment overrides:
+# MAYA_DEVKIT_URL_2021_WINDOWS, MAYA_DEVKIT_URL_2021_LINUX, MAYA_DEVKIT_URL_2021_MACOS.
 
 # Maya 2022
 [devkit.urls."2022"]

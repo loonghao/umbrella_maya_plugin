@@ -2,20 +2,16 @@
 language = "C"
 header = "/* Umbrella Maya Plugin - Generated C bindings */"
 include_version = true
-namespace = "umbrella"
 cpp_compat = true
 style = "both"
 
 [export]
-include = ["UmbrellaResult", "UmbrellaConfig", "ScanResult"]
+include = ["UmbrellaResult", "UmbrellaConfig", "ScanResult", "CleanFFIResult"]
+exclude = ["MObject", "MStatus", "testFunction", "initializePlugin", "uninitializePlugin"]
 
 [parse]
 parse_deps = true
 include = ["umbrella_maya_plugin"]
-
-[fn]
-prefix = "umbrella_"
-postfix = ""
 
 [struct]
 derive_eq = true

@@ -58,20 +58,20 @@ def load_umbrella_library():
                 lib.umbrella_cleanup.restype = UmbrellaResult
                 lib.umbrella_cleanup.argtypes = []
                 
-                print(f"✅ Successfully loaded Umbrella library from: {dll_path}")
+                print(f"[OK] Successfully loaded Umbrella library from: {dll_path}")
                 return lib
                 
             except Exception as e:
-                print(f"❌ Failed to load library from {dll_path}: {e}")
+                print(f"[ERROR] Failed to load library from {dll_path}: {e}")
                 continue
     
-    print("❌ Could not find Umbrella library in any expected location")
+    print("[ERROR] Could not find Umbrella library in any expected location")
     return None
 
 def test_umbrella_in_maya():
     """Test Umbrella functionality within Maya"""
     print("=" * 60)
-    print("🎬 Testing Umbrella Maya Plugin Integration")
+    print("[MAYA] Testing Umbrella Maya Plugin Integration")
     print("=" * 60)
     
     # Load the library
@@ -84,37 +84,37 @@ def test_umbrella_in_maya():
         print("\n1. Initializing Umbrella engine...")
         init_result = lib.umbrella_init()
         if not init_result.success:
-            print(f"❌ Initialization failed with error code: {init_result.error_code}")
+            print(f"[ERROR] Initialization failed with error code: {init_result.error_code}")
             return False
-        print("✅ Umbrella engine initialized successfully!")
+        print("[OK] Umbrella engine initialized successfully!")
         
         # Test 2: Get version
         print("\n2. Getting version information...")
         version_ptr = lib.umbrella_get_version()
         if version_ptr:
             version = ctypes.string_at(version_ptr).decode('utf-8')
-            print(f"📦 Umbrella version: {version}")
+            print(f"[PACKAGE] Umbrella version: {version}")
             lib.umbrella_free_string(version_ptr)
         
         # Test 3: Get current Maya scene file
         print("\n3. Scanning current Maya scene...")
         current_scene = cmds.file(query=True, sceneName=True)
         if current_scene:
-            print(f"🎬 Current scene: {current_scene}")
+            print(f"[MAYA] Current scene: {current_scene}")
             scene_bytes = current_scene.encode('utf-8')
             scan_result = lib.umbrella_scan_file(scene_bytes)
             
-            print(f"📊 Scan Results:")
+            print(f"[RESULT] Scan Results:")
             print(f"   - Threats found: {scan_result.threats_found}")
             print(f"   - Files scanned: {scan_result.files_scanned}")
             print(f"   - Scan time: {scan_result.scan_time_ms}ms")
             
             if scan_result.threats_found == 0:
-                print("✅ No threats detected in current scene!")
+                print("[OK] No threats detected in current scene!")
             else:
-                print("⚠️  Threats detected! Please review your scene.")
+                print("[WARN]  Threats detected! Please review your scene.")
         else:
-            print("ℹ️  No scene currently open, creating a test scene...")
+            print("[INFO]  No scene currently open, creating a test scene...")
             
             # Create a simple test scene
             cmds.file(new=True, force=True)
@@ -126,13 +126,13 @@ def test_umbrella_in_maya():
             cmds.file(rename=test_scene_path)
             cmds.file(save=True, type="mayaAscii")
             
-            print(f"🎬 Created test scene: {test_scene_path}")
+            print(f"[MAYA] Created test scene: {test_scene_path}")
             
             # Scan the test scene
             scene_bytes = test_scene_path.encode('utf-8')
             scan_result = lib.umbrella_scan_file(scene_bytes)
             
-            print(f"📊 Test Scene Scan Results:")
+            print(f"[RESULT] Test Scene Scan Results:")
             print(f"   - Threats found: {scan_result.threats_found}")
             print(f"   - Files scanned: {scan_result.files_scanned}")
             print(f"   - Scan time: {scan_result.scan_time_ms}ms")
@@ -143,34 +143,34 @@ def test_umbrella_in_maya():
         scripts_dir = os.path.join(maya_app_dir, "scripts")
         
         if os.path.exists(scripts_dir):
-            print(f"📁 Scanning directory: {scripts_dir}")
+            print(f"[DIR] Scanning directory: {scripts_dir}")
             dir_bytes = scripts_dir.encode('utf-8')
             dir_scan_result = lib.umbrella_scan_directory(dir_bytes)
             
-            print(f"📊 Directory Scan Results:")
+            print(f"[RESULT] Directory Scan Results:")
             print(f"   - Threats found: {dir_scan_result.threats_found}")
             print(f"   - Files scanned: {dir_scan_result.files_scanned}")
             print(f"   - Scan time: {dir_scan_result.scan_time_ms}ms")
         else:
-            print(f"⚠️  Scripts directory not found: {scripts_dir}")
+            print(f"[WARN]  Scripts directory not found: {scripts_dir}")
         
         # Test 5: Cleanup
         print("\n5. Cleaning up...")
         cleanup_result = lib.umbrella_cleanup()
         if cleanup_result.success:
-            print("✅ Cleanup completed successfully!")
+            print("[OK] Cleanup completed successfully!")
         else:
-            print(f"⚠️  Cleanup warning (error code: {cleanup_result.error_code})")
+            print(f"[WARN]  Cleanup warning (error code: {cleanup_result.error_code})")
         
         print("\n" + "=" * 60)
-        print("🎉 All tests completed successfully!")
-        print("🛡️  Umbrella Maya Plugin is working correctly!")
+        print("[DONE] All tests completed successfully!")
+        print("[INFO]  Umbrella Maya Plugin is working correctly!")
         print("=" * 60)
         
         return True
         
     except Exception as e:
-        print(f"❌ Error during testing: {e}")
+        print(f"[ERROR] Error during testing: {e}")
         return False
 
 def create_umbrella_maya_command():
@@ -191,21 +191,21 @@ global proc umbrellaInfo()
     
     try:
         mel.eval(mel_command)
-        print("✅ Created Maya MEL commands:")
+        print("[OK] Created Maya MEL commands:")
         print("   - umbrellaScan(path) - Scan files/directories")
         print("   - umbrellaInfo() - Show plugin information")
     except Exception as e:
-        print(f"⚠️  Could not create MEL commands: {e}")
+        print(f"[WARN]  Could not create MEL commands: {e}")
 
 def main():
     """Main function for Maya environment"""
-    print("🛡️  Umbrella Maya Plugin Test")
+    print("[INFO]  Umbrella Maya Plugin Test")
     print("Running in Maya Python environment...")
     
     # Test if we're in Maya
     try:
         maya_version = cmds.about(version=True)
-        print(f"🎬 Maya Version: {maya_version}")
+        print(f"[MAYA] Maya Version: {maya_version}")
         
         # Run the tests
         success = test_umbrella_in_maya()
@@ -213,12 +213,12 @@ def main():
         if success:
             # Create convenience commands
             create_umbrella_maya_command()
-            print("\n💡 You can now use: umbrellaScan() or umbrellaInfo() in Maya")
+            print("\n[TIP] You can now use: umbrellaScan() or umbrellaInfo() in Maya")
         
         return success
         
     except Exception as e:
-        print(f"❌ Error: This script must be run in Maya Python environment")
+        print(f"[ERROR] Error: This script must be run in Maya Python environment")
         print(f"   Details: {e}")
         return False
 

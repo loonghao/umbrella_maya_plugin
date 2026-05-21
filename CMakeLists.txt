@@ -13,6 +13,7 @@ set(MAYA_VERSION "2024" CACHE STRING "Maya version to build for (2018-2026)")
 set(RUST_TARGET "" CACHE STRING "Rust target triple (auto-detected if empty)")
 option(BUILD_TESTS "Build test executables" ON)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+set(UMBRELLA_OUTPUT_DIR "" CACHE PATH "Output directory for Maya plugin binaries")
 
 # Validate Maya version
 set(SUPPORTED_MAYA_VERSIONS 2018 2019 2020 2021 2022 2023 2024 2025 2026)
@@ -43,7 +44,11 @@ if(NOT RUST_TARGET)
 endif()
 
 # Set output directories with version-specific naming
-set(OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/dist/maya${MAYA_VERSION}")
+if(UMBRELLA_OUTPUT_DIR)
+    set(OUTPUT_DIR "${UMBRELLA_OUTPUT_DIR}")
+else()
+    set(OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/dist/maya${MAYA_VERSION}")
+endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIR}")
 
@@ -52,10 +57,13 @@ set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/target/${RUST_TARGET}/release")
 if(WIN32)
     set(RUST_LIB_NAME "umbrella_maya_plugin.dll")
     set(RUST_IMPORT_LIB "${RUST_LIB_DIR}/umbrella_maya_plugin.dll.lib")
+    set(RUST_LINK_LIB "${RUST_IMPORT_LIB}")
 elseif(APPLE)
     set(RUST_LIB_NAME "libumbrella_maya_plugin.dylib")
+    set(RUST_LINK_LIB "${RUST_LIB_DIR}/${RUST_LIB_NAME}")
 else()
     set(RUST_LIB_NAME "libumbrella_maya_plugin.so")
+    set(RUST_LINK_LIB "${RUST_LIB_DIR}/${RUST_LIB_NAME}")
 endif()
 
 set(RUST_LIB_PATH "${RUST_LIB_DIR}/${RUST_LIB_NAME}")
@@ -68,13 +76,30 @@ include_directories(
 # Create the Maya plugin using our helper function
 add_maya_plugin(UmbrellaMayaPlugin
     SOURCES UmbrellaMayaPlugin.cpp
-    LIBRARIES ${RUST_LIB_PATH}
+    LIBRARIES ${RUST_LINK_LIB}
 )
 
-# Version-specific plugin naming
+# Stable Maya plugin filename. The package path carries the Maya version.
 set_target_properties(UmbrellaMayaPlugin PROPERTIES
-    OUTPUT_NAME "UmbrellaMayaPlugin_${MAYA_VERSION}"
+    OUTPUT_NAME "umbrella_maya"
 )
+
+if(APPLE)
+    set_target_properties(UmbrellaMayaPlugin PROPERTIES
+        BUILD_RPATH "@loader_path"
+        INSTALL_RPATH "@loader_path"
+    )
+elseif(UNIX)
+    set_target_properties(UmbrellaMayaPlugin PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()
+
+if(WIN32)
+    target_link_libraries(UmbrellaMayaPlugin PRIVATE delayimp)
+    target_link_options(UmbrellaMayaPlugin PRIVATE "/DELAYLOAD:${RUST_LIB_NAME}")
+endif()
 
 # AddressSanitizer support
 if(ENABLE_ASAN)
@@ -104,7 +129,7 @@ add_dependencies(UmbrellaMayaPlugin generate_bindings)
 add_custom_command(TARGET UmbrellaMayaPlugin POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     ${RUST_LIB_PATH}
-    ${OUTPUT_DIR}/${RUST_LIB_NAME}
+    $<TARGET_FILE_DIR:UmbrellaMayaPlugin>/${RUST_LIB_NAME}
     COMMENT "Copying Rust library to plugin directory"
 )
 
@@ -144,7 +169,7 @@ message(STATUS "Project Version: ${PROJECT_VERSION}")
 message(STATUS "Maya Version: ${MAYA_VERSION}")
 message(STATUS "Rust Target: ${RUST_TARGET}")
 message(STATUS "Output Directory: ${OUTPUT_DIR}")
-message(STATUS "Plugin Name: UmbrellaMayaPlugin_${MAYA_VERSION}${MAYA_PLUGIN_SUFFIX}")
+message(STATUS "Plugin Name: umbrella_maya${MAYA_PLUGIN_SUFFIX}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Build Tests: ${BUILD_TESTS}")
 message(STATUS "AddressSanitizer: ${ENABLE_ASAN}")

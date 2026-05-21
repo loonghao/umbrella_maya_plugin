@@ -1,7 +1,6 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
 
 # Build artifacts
 /build/
@@ -73,6 +72,7 @@ __pycache__/
 venv_python
 .coverage
 coverage.xml
+/coverage/
 
 # Documentation
 docs_src/_build/

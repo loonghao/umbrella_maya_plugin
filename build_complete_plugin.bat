@@ -119,10 +119,10 @@ echo.
 echo ========================================
 echo Build Summary
 echo ========================================
-echo ✅ Rust library: target\release\umbrella_maya_plugin.dll
-echo ✅ C bindings:   build\include\umbrella_maya_plugin.h
-echo ✅ C++ plugin:   build\plug-ins\UmbrellaMayaPlugin.mll
-echo ✅ Rust DLL:     build\plug-ins\umbrella_maya_plugin.dll
+echo [OK] Rust library: target\release\umbrella_maya_plugin.dll
+echo [OK] C bindings:   build\include\umbrella_maya_plugin.h
+echo [OK] C++ plugin:   build\plug-ins\UmbrellaMayaPlugin.mll
+echo [OK] Rust DLL:     build\plug-ins\umbrella_maya_plugin.dll
 
 echo.
 echo Plugin Files:
@@ -162,7 +162,7 @@ echo   umbrellaDisable            - Disable real-time protection
 echo   umbrellaInfo               - Show plugin information
 
 echo.
-echo 🛡️ Build completed successfully!
+echo [INFO] Build completed successfully!
 echo Your Umbrella Maya Plugin is ready to protect Maya environments!
 echo.
 pause

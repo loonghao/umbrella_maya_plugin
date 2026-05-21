@@ -5,13 +5,16 @@
 use std::os::raw::c_int;
 
 pub mod antivirus;
-pub mod ffi;
 pub mod error;
+pub mod ffi;
+
+#[cfg(feature = "python")]
+mod python;
 
 // Maya status codes - these match Maya's MStatus values
-const MS_SUCCESS: c_int = 0;  // MS::kSuccess
+const MS_SUCCESS: c_int = 0; // MS::kSuccess
 #[allow(dead_code)]
-const MS_FAILURE: c_int = 1;  // MS::kFailure
+const MS_FAILURE: c_int = 1; // MS::kFailure
 
 /// Maya MObject representation
 /// For maximum compatibility, treat it as an opaque pointer
@@ -32,11 +35,17 @@ pub struct UmbrellaResult {
 
 impl UmbrellaResult {
     pub fn success() -> Self {
-        Self { success: true, error_code: 0 }
+        Self {
+            success: true,
+            error_code: 0,
+        }
     }
 
     pub fn failure(code: c_int) -> Self {
-        Self { success: false, error_code: code }
+        Self {
+            success: false,
+            error_code: code,
+        }
     }
 }
 
@@ -49,11 +58,22 @@ pub struct ScanResult {
     pub scan_time_ms: c_int,
 }
 
+/// cbindgen:derive-eq
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CleanFFIResult {
+    pub files_cleaned: c_int,
+    pub files_deleted: c_int,
+    pub files_failed: c_int,
+    pub threats_removed: c_int,
+    pub scan_time_ms: c_int,
+}
+
 /// Simple test function to verify DLL loading works
 /// This can be called from Maya to test basic functionality
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn testFunction() -> c_int {
-    42  // Return a test value
+    42 // Return a test value
 }
 
 /// Maya plugin initialization function
@@ -62,7 +82,7 @@ pub extern "C" fn testFunction() -> c_int {
 /// Using extern "C" to match Maya's expected calling convention
 /// The function signature must exactly match what Maya expects:
 /// extern "C" MStatus initializePlugin(MObject obj)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn initializePlugin(_obj: MObject) -> MStatus {
     // Just return success - minimal implementation
     MS_SUCCESS
@@ -74,7 +94,7 @@ pub extern "C" fn initializePlugin(_obj: MObject) -> MStatus {
 /// Using extern "C" to match Maya's expected calling convention
 /// The function signature must exactly match what Maya expects:
 /// extern "C" MStatus uninitializePlugin(MObject obj)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn uninitializePlugin(_obj: MObject) -> MStatus {
     // Just return success - minimal implementation
     MS_SUCCESS

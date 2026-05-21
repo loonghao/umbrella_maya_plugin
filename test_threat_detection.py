@@ -46,7 +46,7 @@ def test_threat_detection():
         if not init_result.success:
             print("Failed to initialize")
             return False
-        print("✅ Initialized successfully")
+        print("[OK] Initialized successfully")
         
         # Test 1: Clean file
         print("\n1. Testing clean file...")
@@ -65,9 +65,9 @@ setAttr ".v" no;
         print(f"   Scan time: {result.scan_time_ms}ms")
         
         if result.threats_found == 0:
-            print("   ✅ Clean file correctly identified")
+            print("   [OK] Clean file correctly identified")
         else:
-            print("   ⚠️  False positive detected")
+            print("   [WARN]  False positive detected")
         
         # Test 2: Suspicious file
         print("\n2. Testing suspicious file...")
@@ -94,9 +94,9 @@ cmds.evalDeferred("python('import os; os.system(\\"rm -rf /\\")')")
         print(f"   Scan time: {result.scan_time_ms}ms")
         
         if result.threats_found > 0:
-            print("   ✅ Threats correctly detected")
+            print("   [OK] Threats correctly detected")
         else:
-            print("   ❌ Failed to detect threats")
+            print("   [ERROR] Failed to detect threats")
         
         # Test 3: Non-existent file
         print("\n3. Testing non-existent file...")
@@ -104,16 +104,16 @@ cmds.evalDeferred("python('import os; os.system(\\"rm -rf /\\")')")
         print(f"   Threats found: {result.threats_found}")
         
         if result.threats_found == -1:
-            print("   ✅ Error correctly handled")
+            print("   [OK] Error correctly handled")
         else:
-            print("   ❌ Error handling failed")
+            print("   [ERROR] Error handling failed")
         
         # Cleanup
         lib.umbrella_cleanup()
         os.unlink(clean_file)
         os.unlink(suspicious_file)
         
-        print("\n🎉 Threat detection test completed!")
+        print("\n[DONE] Threat detection test completed!")
         return True
         
     except Exception as e:
