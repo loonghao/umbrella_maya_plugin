@@ -4,6 +4,10 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_PYTHON").is_some() {
+        pyo3_build_config::add_extension_module_link_args();
+    }
+
     // Generate C bindings using cbindgen (only if cbindgen is available)
     if let Err(e) = generate_c_bindings() {
         println!("cargo:warning=Failed to generate C bindings: {}", e);
@@ -31,7 +35,9 @@ fn generate_c_bindings() -> Result<(), Box<dyn std::error::Error>> {
         .generate()?
         .write_to_file(output_dir.join("umbrella_maya_plugin.h"));
 
-    println!("Generated C bindings at: {:?}", output_dir.join("umbrella_maya_plugin.h"));
+    println!(
+        "Generated C bindings at: {:?}",
+        output_dir.join("umbrella_maya_plugin.h")
+    );
     Ok(())
 }
-

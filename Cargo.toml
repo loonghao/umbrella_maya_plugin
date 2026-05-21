@@ -1,29 +1,40 @@
+[workspace]
+members = [".", "crates/umbrella-core"]
+resolver = "2"
+
 [package]
 name = "umbrella_maya_plugin"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.95"
 authors = ["Maya Umbrella Team", "loonghao <hal.long@outlook.com>"]
 description = "High-performance Rust implementation of maya_umbrella - Maya antivirus plugin that bypasses Python security restrictions"
 license = "MIT"
-repository = "https://github.com/loonghao/maya_umbrella"
-homepage = "https://github.com/loonghao/maya_umbrella"
+repository = "https://github.com/loonghao/umbrella_maya_plugin"
+homepage = "https://github.com/loonghao/umbrella_maya_plugin"
 keywords = ["maya", "antivirus", "security", "plugin", "rust"]
 categories = ["multimedia", "development-tools"]
 
 [lib]
 name = "umbrella_maya_plugin"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "cargo-maya-build"
 path = "src/bin/cargo-maya-build.rs"
 
+[[bin]]
+name = "umbrella-maya"
+path = "src/bin/umbrella-maya.rs"
+
 [dependencies]
+umbrella-core = { path = "crates/umbrella-core" }
 libc = "0.2"
 thiserror = "2.0"
 anyhow = "1.0"
 log = "0.4"
 env_logger = "0.11"
+pyo3 = { version = "0.28.3", optional = true, features = ["extension-module", "abi3", "abi3-py38"] }
 # Build tool dependencies
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -44,10 +55,12 @@ toml = "0.8"
 bindgen = "0.71"
 cc = "1.2"
 cbindgen = "0.29"
+pyo3-build-config = "0.28.3"
 
 [features]
 default = []
 maya_bindings = []
+python = ["dep:pyo3"]
 # Maya version features
 maya2018 = ["maya_bindings"]
 maya2019 = ["maya_bindings"]

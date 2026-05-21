@@ -65,7 +65,7 @@ pub use forward_decls::*;
 // Raw Maya API function declarations
 // These functions provide direct access to Maya's C++ API.
 // They are unsafe and should be wrapped in safe Rust functions.
-extern "C" {
+unsafe extern "C" {
     // MObject functions
     pub fn MObject_create() -> MObject;
     pub fn MObject_isNull(obj: *const MObject) -> bool;

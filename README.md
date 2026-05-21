@@ -1,41 +1,41 @@
-# 🛡️ Umbrella Maya Plugin (Rust Implementation)
+# Umbrella Maya Plugin (Rust Implementation)
 
-> **⚠️ ACTIVE DEVELOPMENT STATUS**
+> **ACTIVE DEVELOPMENT STATUS**
 > This project is currently under **active development**. While the core architecture and build system are functional, some features are still being implemented. The plugin is not yet ready for production use. Contributions and feedback are welcome!
 
 **High-performance Rust implementation of [maya_umbrella](https://github.com/loonghao/maya_umbrella)** - A next-generation Maya antivirus plugin that bypasses Python security restrictions while delivering superior performance.
 
-## 🎯 Project Overview
+## Project Overview
 
 This project is a **complete Rust rewrite** of the original [maya_umbrella](https://github.com/loonghao/maya_umbrella) Python tool, designed to overcome the security limitations imposed on Python scripts in newer Maya versions. By implementing the core functionality in Rust and exposing it through a native C++ Maya plugin, we achieve:
 
-- **🚀 Superior Performance**: 10x faster scanning compared to Python implementation
-- **🔓 Security Bypass**: Circumvents Maya's Python security restrictions
-- **🛡️ Memory Safety**: Rust's ownership system prevents crashes and memory leaks
-- **⚡ Zero Dependencies**: No external Python libraries required in Maya environment
+- **Superior Performance**: 10x faster scanning compared to Python implementation
+- **Security Bypass**: Circumvents Maya's Python security restrictions
+- **Memory Safety**: Rust's ownership system prevents crashes and memory leaks
+- **Zero Dependencies**: No external Python libraries required in Maya environment
 
-## ✨ Key Advantages Over Python Version
+## Key Advantages Over Python Version
 
-### 🚀 Performance Improvements
+### Performance Improvements
 - **10x Faster Scanning**: Native Rust implementation with zero-cost abstractions
 - **Parallel Processing**: Multi-threaded threat detection and file scanning
 - **Memory Efficient**: Minimal memory footprint compared to Python interpreter
 - **Instant Startup**: No Python import overhead or module loading delays
 
-### 🔓 Security & Compatibility
+### Security & Compatibility
 - **Bypasses Python Restrictions**: Works in Maya environments with disabled Python execution
 - **Native Plugin Architecture**: Integrates directly with Maya's C++ plugin system
 - **No External Dependencies**: Self-contained binary with no Python library requirements
 - **Enterprise Ready**: Suitable for locked-down production environments
 
-### 🛠️ Technical Features
+### Technical Features
 - **Cross-Platform**: Windows (.mll), Linux (.so), macOS (.bundle)
 - **Multi-Version Support**: Maya 2018-2026 compatibility
 - **Real-time Protection**: Background monitoring with Maya event callbacks
 - **Advanced Threat Detection**: 25+ threat patterns with intelligent false-positive reduction
 - **CI/CD Ready**: Automated cross-platform builds with GitHub Actions
 
-## 🏗️ Architecture Comparison
+## Architecture Comparison
 
 ### Original Python Version vs Rust Implementation
 
@@ -75,11 +75,11 @@ This project is a **complete Rust rewrite** of the original [maya_umbrella](http
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
-- **Rust 1.70+** with Cargo
+- **Rust 1.95** with Cargo. The repository pins this through `rust-toolchain.toml`.
 - **CMake 3.16+** for C++ plugin compilation
 - **Maya DevKit** (automatically downloaded)
 - **C++ Compiler**: MSVC (Windows), GCC/Clang (Linux), Xcode (macOS)
@@ -88,9 +88,105 @@ This project is a **complete Rust rewrite** of the original [maya_umbrella](http
 
 ```bash
 # Clone the repository
-git clone https://github.com/loonghao/maya_umbrella.git
+git clone https://github.com/loonghao/umbrella_maya_plugin.git
 cd umbrella_maya_plugin
 
+# Build Maya 2024 for the current platform and create an installable Maya module package
+vx just package 2024
+
+# Build and install into the current user's Maya modules directory
+vx just install 2024
+
+# Show all available build commands
+vx just
+```
+
+The installable module package is written to:
+
+```text
+dist/modules/UmbrellaMayaPlugin-<version>-maya<maya-version>-<platform>/
+├── UmbrellaMayaPlugin.mod
+└── UmbrellaMayaPlugin/
+    └── plug-ins/
+        ├── umbrella_maya.<mll|so|bundle>
+        └── umbrella_maya_plugin.<dll|so|dylib>
+```
+
+### Build All Runtime Shapes
+
+The project now builds three deployment shapes from the same Rust core:
+
+```bash
+# Native Maya plugin module (.mll/.so/.bundle + Rust runtime)
+vx just package 2024
+
+# Python extension for mayapy/Python automation (.pyd on Windows)
+vx just build-pyd
+
+# Standalone scanner/cleaner CLI
+vx just build-cli
+
+# Build all three for the current Maya version/platform
+vx just package-current 2024
+```
+
+Release packages contain:
+
+```text
+maya-module/   # installable Maya module package
+python/        # umbrella_maya.pyd or platform extension
+cli/           # umbrella-maya scanner/cleaner executable
+```
+
+### CLI Usage
+
+```bash
+# Scan scenes like maya_umbrella_scanner
+umbrella-maya --path D:\show\assets --scene-only
+
+# Export infected files and clean through Maya standalone + the MLL plugin
+umbrella-maya --path D:\show\assets --maya-version 2024 --plugin path\to\umbrella_maya.mll
+
+# Offline text cleanup for .ma/.mel/.py files
+umbrella-maya --path D:\show\scripts --clean
+
+# Machine-readable report
+umbrella-maya --path tests\virus --scene-only --json
+```
+
+### Python Extension Usage
+
+```python
+import umbrella_maya
+
+print(umbrella_maya.version())
+print(umbrella_maya.scan_path("tests/virus", True))
+
+scanner = umbrella_maya.MayaVirusScanner()
+fixed = scanner.scan_files_from_pattern("D:/show/**/*.ma")
+```
+
+### CI and Release Matrix
+
+GitHub Actions now has two maintained workflows:
+
+- `CI`: runs Rust format/check/clippy/tests and builds CLI + Python extension on Windows, Linux, and macOS.
+- `Release`: builds Maya 2018 through 2026 on Windows, Linux, and macOS, then uploads one zip per Maya version/platform.
+
+Autodesk public DevKit URLs are configured for Maya 2019, 2020, and 2022-2026. At the time of writing, Autodesk's public S3 URLs for Maya 2018 and 2021 return 403, so the release workflow accepts private override URLs through repository secrets:
+
+```text
+MAYA_DEVKIT_URL_2018_WINDOWS
+MAYA_DEVKIT_URL_2018_LINUX
+MAYA_DEVKIT_URL_2018_MACOS
+MAYA_DEVKIT_URL_2021_WINDOWS
+MAYA_DEVKIT_URL_2021_LINUX
+MAYA_DEVKIT_URL_2021_MACOS
+```
+
+You can also run the Rust build tool directly:
+
+```bash
 # Build for current platform and Maya 2024
 cargo run --bin cargo-maya-build
 
@@ -120,7 +216,18 @@ cargo run --bin cargo-maya-build -- --platform windows --maya-version 2024
 
 ### Installation
 
-1. **Copy plugin files to Maya:**
+1. **Install the Maya module package (recommended):**
+   ```bash
+   vx just install 2024
+   ```
+
+   This copies `UmbrellaMayaPlugin.mod` and the `UmbrellaMayaPlugin/` module folder to:
+
+   ```text
+   %USERPROFILE%\Documents\maya\modules
+   ```
+
+2. **Or copy the flat plugin files to Maya manually:**
    ```bash
    # Windows
    copy dist\maya2024-windows\*.* "%USERPROFILE%\Documents\maya\2024\plug-ins\"
@@ -132,13 +239,13 @@ cargo run --bin cargo-maya-build -- --platform windows --maya-version 2024
    cp dist/maya2024-macos/* ~/Library/Preferences/Autodesk/maya/2024/plug-ins/
    ```
 
-2. **Load in Maya:**
+3. **Load in Maya:**
    ```mel
-   loadPlugin "UmbrellaMayaPlugin_2024";
+   loadPlugin "umbrella_maya";
    umbrellaInfo;  // Show plugin information
    ```
 
-## 🔧 Development
+## Development
 
 ### Project Structure
 
@@ -182,7 +289,7 @@ The build script automatically detects Maya installations:
 
 You can also set the `MAYA_LOCATION` environment variable to specify a custom path.
 
-## 🧪 Testing
+## Testing
 
 The project includes comprehensive tests:
 
@@ -199,53 +306,53 @@ cargo test wrapper
 cargo test --test build_script_test
 ```
 
-## 📊 Project Status
+## Project Status
 
-### ✅ Completed Features
-- **🦀 Rust Core Architecture**: Basic threat detection framework and FFI interface
-- **🔌 C++ Maya Plugin**: Plugin structure with Maya API integration
-- **🏗️ Cross-platform Build System**: CMake + Cargo integration with Maya DevKit support
-- **📦 Build Tool**: `cargo-maya-build` for automated compilation
-- **🎯 Maya DevKit Integration**: Support for Maya 2018-2026 development
-- **⚡ Zero Dependencies**: Self-contained binary architecture
+### Completed Features
+- **Rust Core Architecture**: Basic threat detection framework and FFI interface
+- **C++ Maya Plugin**: Plugin structure with Maya API integration
+- **Cross-platform Build System**: CMake + Cargo integration with Maya DevKit support
+- **Build Tool**: `cargo-maya-build` for automated compilation
+- **Maya DevKit Integration**: Support for Maya 2018-2026 development
+- **Zero Dependencies**: Self-contained binary architecture
 
-### 🚧 Currently Under Development
-- **🛡️ Core Antivirus Engine**: Implementing actual threat detection algorithms
-- **🔍 Pattern Detection**: Advanced threat pattern recognition system
-- **📱 Maya UI Integration**: Shelf buttons, menus, and user interface
-- **🧪 Comprehensive Testing**: Unit tests and integration test suite
-- **📈 Performance Optimization**: Multi-threading and scanning optimizations
-- **🔄 Real-time Protection**: Background monitoring with Maya event callbacks
+### Currently Under Development
+- **Core Antivirus Engine**: Implementing actual threat detection algorithms
+- **Pattern Detection**: Advanced threat pattern recognition system
+- **Maya UI Integration**: Shelf buttons, menus, and user interface
+- **Comprehensive Testing**: Unit tests and integration test suite
+- **Performance Optimization**: Multi-threading and scanning optimizations
+- **Real-time Protection**: Background monitoring with Maya event callbacks
 
-### 📋 Planned Features
-- **🌐 Network Features**: Cloud-based threat intelligence
-- **📊 Reporting System**: Detailed scan reports and logging
-- **⚙️ Configuration Management**: User preferences and settings
-- **🔧 Plugin Management**: Auto-updates and version management
+### Planned Features
+- **Network Features**: Cloud-based threat intelligence
+- **Reporting System**: Detailed scan reports and logging
+- **Configuration Management**: User preferences and settings
+- **Plugin Management**: Auto-updates and version management
 
-### 📈 Development Benchmarks
-- **🏗️ Build System**: Cross-platform compilation working
-- **⚡ Rust Compilation**: Fast incremental builds
-- **🔧 Maya DevKit Integration**: Successful plugin loading framework
-- **📦 Binary Size**: Optimized release builds (~2-5MB target)
-- **🎯 Target Performance**: 1000+ files/second (planned)
-- **💾 Target Memory**: < 10MB runtime footprint (planned)
+### Development Benchmarks
+- **Build System**: Cross-platform compilation working
+- **Rust Compilation**: Fast incremental builds
+- **Maya DevKit Integration**: Successful plugin loading framework
+- **Binary Size**: Optimized release builds (~2-5MB target)
+- **Target Performance**: 1000+ files/second (planned)
+- **Target Memory**: < 10MB runtime footprint (planned)
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please read our contributing guidelines and submit pull requests for any improvements.
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🔗 Related Projects
+## Related Projects
 
-- **[maya_umbrella](https://github.com/loonghao/maya_umbrella)** - 🐍 Original Python implementation (this project's predecessor)
+- **[maya_umbrella](https://github.com/loonghao/maya_umbrella)** - Original Python implementation (this project's predecessor)
 - **[rust-maya2018](https://github.com/sdao/rust-maya2018)** - Inspiration for Maya Rust bindings
 - **[Maya DevKit](https://github.com/sonictk/Maya-devkit)** - Open-source Maya development toolkit used for CI builds
 
-## 📈 Performance Comparison
+## Performance Comparison
 
 | Metric | Python Version | Rust Implementation | Improvement |
 |--------|----------------|-------------------|-------------|
@@ -255,17 +362,17 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 | **Binary Size** | N/A (scripts) | ~2-5MB | **Self-contained** |
 | **Maya Compatibility** | Limited by Python restrictions | Full native access | **Unrestricted** |
 
-## 🎯 Migration from Python Version
+## Migration from Python Version
 
 If you're currently using the Python version of maya_umbrella, here's how to migrate:
 
 ### 1. **Feature Parity**
 All core features from the Python version are implemented:
-- ✅ File and directory scanning
-- ✅ Threat pattern detection
-- ✅ Real-time protection
-- ✅ Maya scene analysis
-- ✅ Batch processing
+- File and directory scanning
+- Threat pattern detection
+- Real-time protection
+- Maya scene analysis
+- Batch processing
 
 ### 2. **Command Mapping**
 | Python Command | Rust Plugin Command |
@@ -282,6 +389,6 @@ All core features from the Python version are implemented:
 - **Better performance** - Significantly faster execution
 - **Enhanced security** - Bypasses Python execution restrictions
 
-## 📞 Support
+## Support
 
 For questions and support, please open an issue on GitHub or contact the development team.

@@ -20,10 +20,13 @@
 #include <maya/MFileIO.h>
 #include <maya/MSceneMessage.h>
 #include <maya/MEventMessage.h>
+#include <maya/MMessage.h>
 #include <maya/MCallbackIdArray.h>
 #include <maya/MFnDependencyNode.h>
 #include <maya/MItDependencyNodes.h>
 #include <maya/MPlug.h>
+#include <maya/MStringArray.h>
+#include <maya/MSelectionList.h>
 
 // Include the generated Rust bindings
 #include "build/include/umbrella_maya_plugin.h"
@@ -33,9 +36,18 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <cwchar>
+#include <cstdlib>
+#include <cctype>
+#include <algorithm>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 // Plugin information
-static const char* kPluginName = "UmbrellaMayaPlugin";
+static const char* kPluginName = "umbrella_maya";
 static const char* kPluginVersion = "1.0.0";
 static const char* kPluginVendor = "Umbrella Security Team";
 
@@ -43,6 +55,9 @@ static const char* kPluginVendor = "Umbrella Security Team";
 static const char* kScanFileCommand = "umbrellaScanFile";
 static const char* kScanDirectoryCommand = "umbrellaScanDirectory";
 static const char* kScanCurrentSceneCommand = "umbrellaScanScene";
+static const char* kCleanFileCommand = "umbrellaCleanFile";
+static const char* kCleanDirectoryCommand = "umbrellaCleanDirectory";
+static const char* kFixSceneCommand = "umbrellaFixScene";
 static const char* kUmbrellaInfoCommand = "umbrellaInfo";
 static const char* kUmbrellaStatusCommand = "umbrellaStatus";
 static const char* kUmbrellaEnableCommand = "umbrellaEnable";
@@ -55,10 +70,64 @@ static MCallbackIdArray g_callbackIds;
 
 // Utility functions
 namespace UmbrellaUtils {
+
+#ifdef _WIN32
+    static HMODULE g_rustDllHandle = nullptr;
+
+    bool ensureRustRuntimeLoaded() {
+        if (g_rustDllHandle != nullptr) {
+            return true;
+        }
+
+        HMODULE pluginModule = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&ensureRustRuntimeLoaded),
+                &pluginModule)) {
+            MGlobal::displayError("Umbrella: failed to locate plugin module for DLL dependency loading");
+            return false;
+        }
+
+        wchar_t pluginPath[MAX_PATH] = {};
+        DWORD length = GetModuleFileNameW(pluginModule, pluginPath, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) {
+            MGlobal::displayError("Umbrella: failed to resolve plugin module path");
+            return false;
+        }
+
+        wchar_t* lastBackslash = std::wcsrchr(pluginPath, L'\\');
+        wchar_t* lastSlash = std::wcsrchr(pluginPath, L'/');
+        wchar_t* separator = lastBackslash > lastSlash ? lastBackslash : lastSlash;
+        if (separator == nullptr) {
+            MGlobal::displayError("Umbrella: failed to resolve plugin directory");
+            return false;
+        }
+
+        *(separator + 1) = L'\0';
+        std::wstring rustDllPath = std::wstring(pluginPath) + L"umbrella_maya_plugin.dll";
+        SetDllDirectoryW(pluginPath);
+
+        g_rustDllHandle = LoadLibraryW(rustDllPath.c_str());
+        if (g_rustDllHandle == nullptr) {
+            MGlobal::displayError(MString("Umbrella: failed to load umbrella_maya_plugin.dll. Windows error: ") + static_cast<int>(GetLastError()));
+            return false;
+        }
+
+        return true;
+    }
+#else
+    bool ensureRustRuntimeLoaded() {
+        return true;
+    }
+#endif
     
     bool initializeUmbrella() {
         if (g_umbrellaInitialized) {
             return true;
+        }
+
+        if (!ensureRustRuntimeLoaded()) {
+            return false;
         }
         
         UmbrellaResult result = umbrella_init();
@@ -87,13 +156,24 @@ namespace UmbrellaUtils {
         msg += MString("Scan time: ") + result.scan_time_ms + "ms\n";
         
         if (result.threats_found > 0) {
-            msg += "⚠️ WARNING: Threats detected! Please review the scanned content.";
+            msg += "WARNING: Threats detected. Please review the scanned content.";
         } else if (result.threats_found == 0) {
-            msg += "✅ No threats detected. Content appears safe.";
+            msg += "No threats detected. Content appears safe.";
         } else {
-            msg += "❌ Scan failed. Please check the file path and permissions.";
+            msg += "Scan failed. Please check the file path and permissions.";
         }
         
+        return msg;
+    }
+
+    MString formatCleanResult(const CleanFFIResult& result, const MString& target) {
+        MString msg;
+        msg.format("Umbrella Clean Results for: ^1s\n", target);
+        msg += MString("Files cleaned: ") + result.files_cleaned + "\n";
+        msg += MString("Files deleted: ") + result.files_deleted + "\n";
+        msg += MString("Files failed: ") + result.files_failed + "\n";
+        msg += MString("Threat signatures removed: ") + result.threats_removed + "\n";
+        msg += MString("Clean time: ") + result.scan_time_ms + "ms\n";
         return msg;
     }
     
@@ -108,6 +188,256 @@ namespace UmbrellaUtils {
             std::cout << "[UMBRELLA] " << logMsg.asChar() << std::endl;
         }
     }
+
+    bool envTrue(const char* name) {
+        const char* value = std::getenv(name);
+        if (value == nullptr) {
+            return false;
+        }
+        std::string text(value);
+        for (char& ch : text) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return text == "1" || text == "true" || text == "yes" || text == "on";
+    }
+
+    bool hookDisabled(const char* hookName) {
+        if (envTrue("MAYA_UMBRELLA_DISABLE_ALL_HOOKS")) {
+            return true;
+        }
+        const char* disabled = std::getenv("MAYA_UMBRELLA_DISABLE_HOOKS");
+        if (disabled == nullptr) {
+            return false;
+        }
+        std::string list(disabled);
+        std::string hook(hookName);
+        size_t start = 0;
+        while (start <= list.size()) {
+            size_t comma = list.find(',', start);
+            std::string item = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+            size_t first = item.find_first_not_of(" \t");
+            size_t last = item.find_last_not_of(" \t");
+            if (first != std::string::npos && item.substr(first, last - first + 1) == hook) {
+                return true;
+            }
+            if (comma == std::string::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+        return false;
+    }
+
+    MString quote(const MString& value) {
+        std::string input(value.asChar());
+        std::string escaped;
+        escaped.reserve(input.size() + 2);
+        escaped.push_back('"');
+        for (char ch : input) {
+            if (ch == '\\' || ch == '"') {
+                escaped.push_back('\\');
+            }
+            escaped.push_back(ch);
+        }
+        escaped.push_back('"');
+        return MString(escaped.c_str());
+    }
+
+    void executeQuiet(const MString& command) {
+        MStatus status = MGlobal::executeCommand(command, false, false);
+        if (!status) {
+            MGlobal::displayWarning(MString("Umbrella command failed: ") + command);
+        }
+    }
+
+    bool isReferencedNode(const MFnDependencyNode& node) {
+        return node.isFromReferencedFile();
+    }
+
+    MString plugStringValue(MFnDependencyNode& node, const char* attr) {
+        MStatus status;
+        MPlug plug = node.findPlug(attr, false, &status);
+        if (!status) {
+            return MString();
+        }
+        MString value;
+        plug.getValue(value);
+        return value;
+    }
+
+    bool containsThreat(const MString& content) {
+        if (content.length() == 0) {
+            return false;
+        }
+        return umbrella_scan_content(content.asChar()) > 0;
+    }
+
+    void clearScriptNode(const MString& nodeName) {
+        executeQuiet(MString("setAttr ") + quote(nodeName + ".before") + " -type \"string\" \"\"");
+        executeQuiet(MString("setAttr ") + quote(nodeName + ".after") + " -type \"string\" \"\"");
+        executeQuiet(MString("setAttr ") + quote(nodeName + ".scriptType") + " 0");
+    }
+
+    int fixInfectedScriptNodes() {
+        int fixed = 0;
+        MItDependencyNodes it(MFn::kScript);
+        for (; !it.isDone(); it.next()) {
+            MObject nodeObject = it.thisNode();
+            MFnDependencyNode node(nodeObject);
+            MString nodeName = node.name();
+            std::string name(nodeName.asChar());
+            MString before = plugStringValue(node, "before");
+            MString after = plugStringValue(node, "after");
+            MString notes = plugStringValue(node, "notes");
+
+            bool infected =
+                name.find("_gene") != std::string::npos ||
+                name == "maya_secure_system_scriptNode" ||
+                name == "uifiguration" ||
+                name.find("codeExtractor") != std::string::npos ||
+                name.find("codeChunk") != std::string::npos ||
+                containsThreat(before) ||
+                containsThreat(after) ||
+                containsThreat(notes);
+
+            if (!infected) {
+                continue;
+            }
+
+            if (isReferencedNode(node)) {
+                clearScriptNode(nodeName);
+            } else {
+                executeQuiet(MString("lockNode -lock off ") + quote(nodeName));
+                executeQuiet(MString("delete ") + quote(nodeName));
+            }
+            fixed++;
+        }
+        return fixed;
+    }
+
+    int killInfectedScriptJobs() {
+        MStringArray jobs;
+        MGlobal::executeCommand("scriptJob -listJobs", jobs, false, false);
+        int killed = 0;
+        for (unsigned int i = 0; i < jobs.length(); ++i) {
+            std::string job(jobs[i].asChar());
+            if (job.find("leukocyte") == std::string::npos && job.find("execute") == std::string::npos) {
+                continue;
+            }
+            size_t colon = job.find(':');
+            if (colon == std::string::npos) {
+                continue;
+            }
+            std::string id = job.substr(0, colon);
+            if (!id.empty() && std::all_of(id.begin(), id.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); })) {
+                executeQuiet(MString("scriptJob -kill ") + id.c_str() + " -force");
+                killed++;
+            }
+        }
+        return killed;
+    }
+
+    int deleteUnknownPluginNodes() {
+        int deleted = 0;
+        MStringArray unknownNodes;
+        MGlobal::executeCommand("ls -type unknown", unknownNodes, false, false);
+        for (unsigned int i = 0; i < unknownNodes.length(); ++i) {
+            MString nodeName = unknownNodes[i];
+            MSelectionList selection;
+            MStatus status = selection.add(nodeName);
+            if (status) {
+                MObject object;
+                selection.getDependNode(0, object);
+                MFnDependencyNode node(object);
+                if (isReferencedNode(node)) {
+                    continue;
+                }
+            }
+            executeQuiet(MString("lockNode -lock off ") + quote(nodeName));
+            executeQuiet(MString("delete ") + quote(nodeName));
+            deleted++;
+        }
+
+        MStringArray unknownPlugins;
+        MGlobal::executeCommand("unknownPlugin -q -l", unknownPlugins, false, false);
+        for (unsigned int i = 0; i < unknownPlugins.length(); ++i) {
+            executeQuiet(MString("unknownPlugin -remove ") + quote(unknownPlugins[i]));
+        }
+        return deleted;
+    }
+
+    int deleteTurtleNodes() {
+        const char* plugins[] = {"Turtle.mll", "mayatomr.mll"};
+        for (const char* plugin : plugins) {
+            executeQuiet(MString("if (`pluginInfo -q -loaded ") + quote(plugin) + "`) unloadPlugin -f " + quote(plugin));
+        }
+
+        const char* nodes[] = {
+            "TurtleRenderOptions",
+            "TurtleUIOptions",
+            "TurtleBakeLayerManager",
+            "TurtleDefaultBakeLayer",
+        };
+        int deleted = 0;
+        for (const char* node : nodes) {
+            executeQuiet(MString("if (`objExists ") + quote(node) + "`) { lockNode -lock off " + quote(node) + "; delete " + quote(node) + "; }");
+            deleted++;
+        }
+        executeQuiet("if (!`about -batch`) { string $shelves[] = `tabLayout -q -ca $gShelfTopLevel`; if (stringArrayContains(\"TURTLE\", $shelves)) deleteUI -layout \"TURTLE\"; }");
+        return deleted;
+    }
+
+    void fixModelPanels() {
+        executeQuiet("string $panels[] = `getPanel -type modelPanel`; for ($panel in $panels) { string $cb = `modelEditor -q -editorChanged $panel`; if ($cb == \"CgAbBlastPanelOptChangeCallback\") modelEditor -e -editorChanged \"\" $panel; }");
+    }
+
+    void fixOnModelChange3dc() {
+        executeQuiet("global proc onModelChange3dc(string $a){}");
+        executeQuiet("if (`objExists \"fixCgAbBlastPanelOptChangeCallback\"`) delete \"fixCgAbBlastPanelOptChangeCallback\"");
+        executeQuiet("global proc CgAbBlastPanelOptChangeCallback(string $i){}");
+    }
+
+    void removeRenameTempFiles() {
+        MString userScriptDir;
+        MGlobal::executeCommand("internalVar -userScriptDir", userScriptDir, false, false);
+        if (userScriptDir.length() == 0) {
+            return;
+        }
+        std::error_code ec;
+        std::filesystem::path root(userScriptDir.asChar());
+        if (!std::filesystem::exists(root, ec)) {
+            return;
+        }
+        for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+            if (ec) {
+                break;
+            }
+            std::string name = entry.path().filename().string();
+            if (name.rfind("._", 0) == 0) {
+                std::filesystem::remove(entry.path(), ec);
+            }
+        }
+    }
+
+    int runSceneFixHooks() {
+        int fixed = 0;
+        if (!hookDisabled("delete_turtle")) {
+            fixed += deleteTurtleNodes();
+        }
+        if (!hookDisabled("delete_unknown_plugin_node")) {
+            fixed += deleteUnknownPluginNodes();
+        }
+        if (!hookDisabled("fix_model_panel")) {
+            fixModelPanels();
+        }
+        if (!hookDisabled("fix_on_model_change_3dc")) {
+            fixOnModelChange3dc();
+        }
+        removeRenameTempFiles();
+        fixed += fixInfectedScriptNodes();
+        fixed += killInfectedScriptJobs();
+        return fixed;
+    }
 }
 
 // Scene monitoring callbacks
@@ -119,6 +449,7 @@ void onSceneOpened(void* clientData) {
     MString currentScene = MFileIO::currentFile();
     if (currentScene.length() > 0) {
         MGlobal::displayInfo("Umbrella: Scanning opened scene...");
+        UmbrellaUtils::runSceneFixHooks();
         
         ScanResult result = umbrella_scan_file(currentScene.asChar());
         if (result.threats_found > 0) {
@@ -135,6 +466,7 @@ void onSceneSaved(void* clientData) {
 
     MString currentScene = MFileIO::currentFile();
     if (currentScene.length() > 0) {
+        UmbrellaUtils::runSceneFixHooks();
         ScanResult result = umbrella_scan_file(currentScene.asChar());
         if (result.threats_found > 0) {
             UmbrellaUtils::logThreatDetection(currentScene, result.threats_found);
@@ -288,6 +620,108 @@ public:
 };
 
 /**
+ * Command: umbrellaCleanFile
+ * Cleans a specific file by removing known file-level signatures.
+ * Usage: umbrellaCleanFile "path/to/file"
+ */
+class UmbrellaCleanFileCommand : public MPxCommand {
+public:
+    UmbrellaCleanFileCommand() {}
+    virtual ~UmbrellaCleanFileCommand() {}
+
+    static void* creator() {
+        return new UmbrellaCleanFileCommand();
+    }
+
+    virtual MStatus doIt(const MArgList& args) {
+        if (!UmbrellaUtils::initializeUmbrella()) {
+            return MS::kFailure;
+        }
+
+        MString filePath;
+        if (args.length() > 0) {
+            MStatus status = args.get(0, filePath);
+            if (status != MS::kSuccess) {
+                MGlobal::displayError("Usage: umbrellaCleanFile \"path/to/file\"");
+                return MS::kFailure;
+            }
+        } else {
+            filePath = MFileIO::currentFile();
+            if (filePath.length() == 0) {
+                MGlobal::displayError("No file specified and no current scene open");
+                return MS::kFailure;
+            }
+        }
+
+        CleanFFIResult result = umbrella_clean_file(filePath.asChar());
+        MGlobal::displayInfo(UmbrellaUtils::formatCleanResult(result, filePath));
+        return result.files_failed == 0 ? MS::kSuccess : MS::kFailure;
+    }
+};
+
+/**
+ * Command: umbrellaCleanDirectory
+ * Cleans supported files under a directory.
+ * Usage: umbrellaCleanDirectory "path/to/directory"
+ */
+class UmbrellaCleanDirectoryCommand : public MPxCommand {
+public:
+    UmbrellaCleanDirectoryCommand() {}
+    virtual ~UmbrellaCleanDirectoryCommand() {}
+
+    static void* creator() {
+        return new UmbrellaCleanDirectoryCommand();
+    }
+
+    virtual MStatus doIt(const MArgList& args) {
+        if (!UmbrellaUtils::initializeUmbrella()) {
+            return MS::kFailure;
+        }
+
+        MString dirPath;
+        if (args.length() > 0) {
+            MStatus status = args.get(0, dirPath);
+            if (status != MS::kSuccess) {
+                MGlobal::displayError("Usage: umbrellaCleanDirectory \"path/to/directory\"");
+                return MS::kFailure;
+            }
+        } else {
+            MGlobal::displayError("Directory path required");
+            return MS::kFailure;
+        }
+
+        CleanFFIResult result = umbrella_clean_directory(dirPath.asChar());
+        MGlobal::displayInfo(UmbrellaUtils::formatCleanResult(result, dirPath));
+        return result.files_failed == 0 ? MS::kSuccess : MS::kFailure;
+    }
+};
+
+/**
+ * Command: umbrellaFixScene
+ * Runs the scene-level cleanup hooks ported from maya_umbrella.
+ * Usage: umbrellaFixScene
+ */
+class UmbrellaFixSceneCommand : public MPxCommand {
+public:
+    UmbrellaFixSceneCommand() {}
+    virtual ~UmbrellaFixSceneCommand() {}
+
+    static void* creator() {
+        return new UmbrellaFixSceneCommand();
+    }
+
+    virtual MStatus doIt(const MArgList& args) {
+        if (!UmbrellaUtils::initializeUmbrella()) {
+            return MS::kFailure;
+        }
+
+        int fixed = UmbrellaUtils::runSceneFixHooks();
+        MGlobal::displayInfo(MString("Umbrella scene cleanup complete. Items handled: ") + fixed);
+        return MS::kSuccess;
+    }
+};
+
+/**
  * Command: umbrellaInfo
  * Displays information about the Umbrella plugin
  * Usage: umbrellaInfo
@@ -323,6 +757,9 @@ public:
         info += "  umbrellaScanFile [path]     - Scan a specific file\n";
         info += "  umbrellaScanDirectory path  - Scan a directory\n";
         info += "  umbrellaScanScene          - Scan current scene\n";
+        info += "  umbrellaCleanFile [path]    - Clean a specific file\n";
+        info += "  umbrellaCleanDirectory path - Clean a directory\n";
+        info += "  umbrellaFixScene           - Run scene cleanup hooks\n";
         info += "  umbrellaStatus             - Show protection status\n";
         info += "  umbrellaEnable             - Enable real-time protection\n";
         info += "  umbrellaDisable            - Disable real-time protection\n";
@@ -350,14 +787,14 @@ public:
     virtual MStatus doIt(const MArgList& args) {
         MString status;
         status += "=== Umbrella Protection Status ===\n";
-        status += MString("Engine: ") + (g_umbrellaInitialized ? "✅ Running" : "❌ Stopped") + "\n";
-        status += MString("Real-time Protection: ") + (g_realTimeProtectionEnabled ? "✅ Enabled" : "❌ Disabled") + "\n";
+        status += MString("Engine: ") + (g_umbrellaInitialized ? "Running" : "Stopped") + "\n";
+        status += MString("Real-time Protection: ") + (g_realTimeProtectionEnabled ? "Enabled" : "Disabled") + "\n";
         status += MString("Active Callbacks: ") + g_callbackIds.length() + "\n";
 
         if (g_umbrellaInitialized) {
-            status += "🛡️ Your Maya environment is protected by Umbrella";
+            status += "Your Maya environment is protected by Umbrella";
         } else {
-            status += "⚠️ Umbrella protection is not active";
+            status += "Umbrella protection is not active";
         }
 
         MGlobal::displayInfo(status);
@@ -400,7 +837,7 @@ public:
             g_callbackIds.append(saveCallbackId);
             g_realTimeProtectionEnabled = true;
 
-            MGlobal::displayInfo("✅ Umbrella real-time protection enabled");
+            MGlobal::displayInfo("Umbrella real-time protection enabled");
             MGlobal::displayInfo("Maya scenes will be automatically scanned when opened or saved");
         } else {
             MGlobal::displayError("Failed to register scene callbacks");
@@ -438,7 +875,7 @@ public:
         g_callbackIds.clear();
         g_realTimeProtectionEnabled = false;
 
-        MGlobal::displayInfo("❌ Umbrella real-time protection disabled");
+        MGlobal::displayInfo("Umbrella real-time protection disabled");
         return MS::kSuccess;
     }
 };
@@ -454,52 +891,44 @@ MStatus initializePlugin(MObject obj) {
     MStatus status;
     MFnPlugin plugin(obj, kPluginVendor, kPluginVersion, "Any");
 
-    // Register all commands
-    status = plugin.registerCommand(kScanFileCommand, UmbrellaScanFileCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaScanFile command");
-        return status;
-    }
+    std::vector<const char*> registeredCommands;
+    auto registerCommand = [&](const char* name, MCreatorFunction creator) -> MStatus {
+        MStatus registerStatus = plugin.registerCommand(name, creator);
+        if (!registerStatus) {
+            registerStatus.perror(MString("Failed to register command: ") + name);
+            for (auto it = registeredCommands.rbegin(); it != registeredCommands.rend(); ++it) {
+                plugin.deregisterCommand(*it);
+            }
+            return registerStatus;
+        }
+        registeredCommands.push_back(name);
+        return MS::kSuccess;
+    };
 
-    status = plugin.registerCommand(kScanDirectoryCommand, UmbrellaScanDirectoryCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaScanDirectory command");
-        return status;
-    }
-
-    status = plugin.registerCommand(kScanCurrentSceneCommand, UmbrellaScanSceneCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaScanScene command");
-        return status;
-    }
-
-    status = plugin.registerCommand(kUmbrellaInfoCommand, UmbrellaInfoCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaInfo command");
-        return status;
-    }
-
-    status = plugin.registerCommand(kUmbrellaStatusCommand, UmbrellaStatusCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaStatus command");
-        return status;
-    }
-
-    status = plugin.registerCommand(kUmbrellaEnableCommand, UmbrellaEnableCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaEnable command");
-        return status;
-    }
-
-    status = plugin.registerCommand(kUmbrellaDisableCommand, UmbrellaDisableCommand::creator);
-    if (!status) {
-        status.perror("Failed to register umbrellaDisable command");
-        return status;
-    }
+    status = registerCommand(kScanFileCommand, UmbrellaScanFileCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kScanDirectoryCommand, UmbrellaScanDirectoryCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kScanCurrentSceneCommand, UmbrellaScanSceneCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kCleanFileCommand, UmbrellaCleanFileCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kCleanDirectoryCommand, UmbrellaCleanDirectoryCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kFixSceneCommand, UmbrellaFixSceneCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kUmbrellaInfoCommand, UmbrellaInfoCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kUmbrellaStatusCommand, UmbrellaStatusCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kUmbrellaEnableCommand, UmbrellaEnableCommand::creator);
+    if (!status) return status;
+    status = registerCommand(kUmbrellaDisableCommand, UmbrellaDisableCommand::creator);
+    if (!status) return status;
 
     // Initialize Umbrella engine
     if (UmbrellaUtils::initializeUmbrella()) {
-        MGlobal::displayInfo("🛡️ Umbrella Maya Plugin loaded successfully!");
+        MGlobal::displayInfo("Umbrella Maya Plugin loaded successfully");
         MGlobal::displayInfo("Type 'umbrellaInfo' for available commands");
 
         // Get and display version info
@@ -546,6 +975,21 @@ MStatus uninitializePlugin(MObject obj) {
     status = plugin.deregisterCommand(kScanCurrentSceneCommand);
     if (!status) {
         status.perror("Failed to deregister umbrellaScanScene command");
+    }
+
+    status = plugin.deregisterCommand(kCleanFileCommand);
+    if (!status) {
+        status.perror("Failed to deregister umbrellaCleanFile command");
+    }
+
+    status = plugin.deregisterCommand(kCleanDirectoryCommand);
+    if (!status) {
+        status.perror("Failed to deregister umbrellaCleanDirectory command");
+    }
+
+    status = plugin.deregisterCommand(kFixSceneCommand);
+    if (!status) {
+        status.perror("Failed to deregister umbrellaFixScene command");
     }
 
     status = plugin.deregisterCommand(kUmbrellaInfoCommand);

@@ -5,22 +5,31 @@ use std::path::Path;
 
 #[test]
 fn test_maya_bindings_generated() {
-    // Check that bindings.rs was generated
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
-    let bindings_path = Path::new(&out_dir).join("bindings.rs");
-    
-    assert!(bindings_path.exists(), "bindings.rs should be generated");
-    
-    // Check that the file is not empty
-    let content = std::fs::read_to_string(&bindings_path)
-        .expect("Should be able to read bindings.rs");
-    
-    assert!(!content.is_empty(), "bindings.rs should not be empty");
-    
-    // Check for expected content (either real bindings or placeholder)
+    // build.rs generates the C ABI header consumed by the C++ Maya plugin.
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let bindings_path = Path::new(&manifest_dir)
+        .join("build")
+        .join("include")
+        .join("umbrella_maya_plugin.h");
+
     assert!(
-        content.contains("MObject") || content.contains("Placeholder"),
-        "bindings.rs should contain Maya types or placeholder content"
+        bindings_path.exists(),
+        "umbrella_maya_plugin.h should be generated"
+    );
+
+    // Check that the file is not empty
+    let content =
+        std::fs::read_to_string(&bindings_path).expect("Should be able to read generated header");
+
+    assert!(
+        !content.is_empty(),
+        "umbrella_maya_plugin.h should not be empty"
+    );
+
+    // Check for the Rust antivirus ABI consumed by the C++ Maya plugin.
+    assert!(
+        content.contains("ScanResult") && content.contains("umbrella_init"),
+        "umbrella_maya_plugin.h should contain antivirus ABI types and entry points"
     );
 }
 

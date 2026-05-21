@@ -4,24 +4,24 @@
 global proc testCompleteUmbrellaPlugin()
 {
     print("=" * 60 + "\n");
-    print("🛡️ Complete Umbrella Maya Plugin Test\n");
+    print("[INFO] Complete Umbrella Maya Plugin Test\n");
     print("=" * 60 + "\n");
     
     // Test 1: Plugin Loading
     print("\n[Test 1] Plugin Loading\n");
     print("-" * 30 + "\n");
     
-    string $pluginName = "UmbrellaMayaPlugin";
+    string $pluginName = "umbrella_maya";
     
     if (`pluginInfo -query -loaded $pluginName`) {
-        print("✅ Plugin is already loaded\n");
+        print("[OK] Plugin is already loaded\n");
     } else {
-        print("📦 Loading plugin...\n");
+        print("[PACKAGE] Loading plugin...\n");
         if (`loadPlugin $pluginName`) {
-            print("✅ Plugin loaded successfully!\n");
+            print("[OK] Plugin loaded successfully!\n");
         } else {
-            print("❌ Failed to load plugin\n");
-            print("💡 Make sure UmbrellaMayaPlugin.mll is in the plug-ins directory\n");
+            print("[ERROR] Failed to load plugin\n");
+            print("[TIP] Make sure umbrella_maya.mll is in the plug-ins directory\n");
             return;
         }
     }
@@ -33,7 +33,7 @@ global proc testCompleteUmbrellaPlugin()
     if (`exists umbrellaInfo`) {
         umbrellaInfo;
     } else {
-        print("❌ umbrellaInfo command not found\n");
+        print("[ERROR] umbrellaInfo command not found\n");
         return;
     }
     
@@ -44,7 +44,7 @@ global proc testCompleteUmbrellaPlugin()
     if (`exists umbrellaStatus`) {
         umbrellaStatus;
     } else {
-        print("❌ umbrellaStatus command not found\n");
+        print("[ERROR] umbrellaStatus command not found\n");
     }
     
     // Test 4: Create Test Scene
@@ -65,14 +65,14 @@ global proc testCompleteUmbrellaPlugin()
     string $scriptNode = `scriptNode -name "suspicious_script" -scriptType 2`;
     scriptNode -edit -beforeScript "import os\nexec('print(\"test\")')\neval('1+1')" $scriptNode;
     
-    print("✅ Test scene created with suspicious script node\n");
+    print("[OK] Test scene created with suspicious script node\n");
     
     // Save the test scene
     string $testScenePath = `workspace -q -rootDirectory` + "umbrella_test_scene.ma";
     file -rename $testScenePath;
     file -save -type "mayaAscii";
     
-    print("💾 Test scene saved: " + $testScenePath + "\n");
+    print("[SAVE] Test scene saved: " + $testScenePath + "\n");
     
     // Test 5: Scan Current Scene
     print("\n[Test 5] Scanning Current Scene\n");
@@ -81,7 +81,7 @@ global proc testCompleteUmbrellaPlugin()
     if (`exists umbrellaScanScene`) {
         umbrellaScanScene;
     } else {
-        print("❌ umbrellaScanScene command not found\n");
+        print("[ERROR] umbrellaScanScene command not found\n");
     }
     
     // Test 6: Scan Specific File
@@ -91,7 +91,7 @@ global proc testCompleteUmbrellaPlugin()
     if (`exists umbrellaScanFile`) {
         umbrellaScanFile $testScenePath;
     } else {
-        print("❌ umbrellaScanFile command not found\n");
+        print("[ERROR] umbrellaScanFile command not found\n");
     }
     
     // Test 7: Enable Real-time Protection
@@ -99,7 +99,7 @@ global proc testCompleteUmbrellaPlugin()
     print("-" * 30 + "\n");
     
     if (`exists umbrellaEnable`) {
-        print("🔄 Enabling real-time protection...\n");
+        print("[RUN] Enabling real-time protection...\n");
         umbrellaEnable;
         
         // Check status
@@ -108,17 +108,17 @@ global proc testCompleteUmbrellaPlugin()
         }
         
         // Test real-time protection by opening another scene
-        print("🔄 Testing real-time protection...\n");
+        print("[RUN] Testing real-time protection...\n");
         file -new -force;
         file -open -force $testScenePath;
         
         // Disable real-time protection
         if (`exists umbrellaDisable`) {
-            print("🔄 Disabling real-time protection...\n");
+            print("[RUN] Disabling real-time protection...\n");
             umbrellaDisable;
         }
     } else {
-        print("❌ Real-time protection commands not found\n");
+        print("[ERROR] Real-time protection commands not found\n");
     }
     
     // Test 8: Directory Scanning
@@ -130,15 +130,15 @@ global proc testCompleteUmbrellaPlugin()
         string $scriptsDir = $mayaAppDir + "scripts";
         
         if (`filetest -d $scriptsDir`) {
-            print("🔍 Scanning scripts directory: " + $scriptsDir + "\n");
+            print("[SCAN] Scanning scripts directory: " + $scriptsDir + "\n");
             umbrellaScanDirectory $scriptsDir;
         } else {
-            print("⚠️ Scripts directory not found, scanning current workspace...\n");
+            print("[WARN] Scripts directory not found, scanning current workspace...\n");
             string $workspace = `workspace -q -rootDirectory`;
             umbrellaScanDirectory $workspace;
         }
     } else {
-        print("❌ umbrellaScanDirectory command not found\n");
+        print("[ERROR] umbrellaScanDirectory command not found\n");
     }
     
     // Test 9: Command Availability Check
@@ -160,10 +160,10 @@ global proc testCompleteUmbrellaPlugin()
     
     for ($cmd in $expectedCommands) {
         if (`exists $cmd`) {
-            print("✅ " + $cmd + "\n");
+            print("[OK] " + $cmd + "\n");
             $commandsFound++;
         } else {
-            print("❌ " + $cmd + " (missing)\n");
+            print("[ERROR] " + $cmd + " (missing)\n");
         }
     }
     
@@ -174,7 +174,7 @@ global proc testCompleteUmbrellaPlugin()
     print("-" * 30 + "\n");
     
     if (`exists umbrellaScanFile` && `filetest -f $testScenePath`) {
-        print("⏱️ Running performance test (5 scans)...\n");
+        print("[TIME] Running performance test (5 scans)...\n");
         
         float $startTime = `timerX`;
         
@@ -186,7 +186,7 @@ global proc testCompleteUmbrellaPlugin()
         float $totalTime = $endTime - $startTime;
         float $avgTime = $totalTime / 5.0;
         
-        print("📊 Performance Results:\n");
+        print("[RESULT] Performance Results:\n");
         print("   Total time: " + $totalTime + " seconds\n");
         print("   Average per scan: " + $avgTime + " seconds\n");
         print("   Scans per second: " + (1.0 / $avgTime) + "\n");
@@ -194,37 +194,37 @@ global proc testCompleteUmbrellaPlugin()
     
     // Final Summary
     print("\n" + "=" * 60 + "\n");
-    print("🎉 Complete Plugin Test Summary\n");
+    print("[DONE] Complete Plugin Test Summary\n");
     print("=" * 60 + "\n");
     
     if ($commandsFound == $totalCommands) {
-        print("✅ All tests completed successfully!\n");
-        print("🛡️ Umbrella Maya Plugin is fully functional\n");
+        print("[OK] All tests completed successfully!\n");
+        print("[INFO] Umbrella Maya Plugin is fully functional\n");
     } else {
-        print("⚠️ Some tests failed or commands are missing\n");
-        print("💡 Check plugin installation and Maya SDK compatibility\n");
+        print("[WARN] Some tests failed or commands are missing\n");
+        print("[TIP] Check plugin installation and Maya SDK compatibility\n");
     }
     
-    print("\n📋 Test Results:\n");
-    print("   Plugin loaded: ✅\n");
+    print("\n[LIST] Test Results:\n");
+    print("   Plugin loaded: [OK]\n");
     print("   Commands available: " + $commandsFound + "/" + $totalCommands + "\n");
-    print("   Test scene created: ✅\n");
-    print("   Threat detection: ✅\n");
-    print("   Real-time protection: ✅\n");
+    print("   Test scene created: [OK]\n");
+    print("   Threat detection: [OK]\n");
+    print("   Real-time protection: [OK]\n");
     
-    print("\n💡 Next Steps:\n");
+    print("\n[TIP] Next Steps:\n");
     print("   1. Use 'umbrellaEnable' to activate real-time protection\n");
     print("   2. Use 'umbrellaScanScene' to scan your current work\n");
     print("   3. Use 'umbrellaInfo' for help and command reference\n");
     
-    print("\n🛡️ Your Maya environment is now protected by Umbrella!\n");
+    print("\n[INFO] Your Maya environment is now protected by Umbrella!\n");
     print("=" * 60 + "\n");
 }
 
 // Helper function to show available commands
 global proc showUmbrellaCommands()
 {
-    print("🛡️ Umbrella Maya Plugin Commands:\n");
+    print("[INFO] Umbrella Maya Plugin Commands:\n");
     print("-" * 40 + "\n");
     print("umbrellaScanFile [path]     - Scan a specific file\n");
     print("umbrellaScanDirectory path  - Scan a directory\n");
@@ -238,6 +238,6 @@ global proc showUmbrellaCommands()
 }
 
 // Auto-run message
-print("📜 Complete Umbrella Plugin test script loaded\n");
-print("💡 Run 'testCompleteUmbrellaPlugin()' to start comprehensive testing\n");
-print("💡 Run 'showUmbrellaCommands()' to see available commands\n");
+print("[SCRIPT] Complete Umbrella Plugin test script loaded\n");
+print("[TIP] Run 'testCompleteUmbrellaPlugin()' to start comprehensive testing\n");
+print("[TIP] Run 'showUmbrellaCommands()' to see available commands\n");

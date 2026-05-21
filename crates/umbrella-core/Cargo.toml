@@ -1,0 +1,17 @@
+[package]
+name = "umbrella-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+authors = ["Maya Umbrella Team", "loonghao <hal.long@outlook.com>"]
+description = "Core domain logic for Umbrella Maya antivirus scanning and cleaning"
+license = "MIT"
+
+[dependencies]
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+walkdir = "2.0"
+
+[dev-dependencies]
+tempfile = "3.20"
