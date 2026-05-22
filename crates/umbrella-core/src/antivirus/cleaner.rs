@@ -406,13 +406,12 @@ fn created_node_name(line: &str) -> Option<String> {
 }
 
 fn is_infected_maya_ascii_block(node_name: Option<&str>, block: &str) -> bool {
-    if let Some(name) = node_name {
-        if name == "maya_secure_system_scriptNode"
+    if let Some(name) = node_name
+        && (name == "maya_secure_system_scriptNode"
             || name == "codeExtractor"
-            || name.starts_with("codeChunk")
-        {
-            return true;
-        }
+            || name.starts_with("codeChunk"))
+    {
+        return true;
     }
 
     [
