@@ -18,6 +18,7 @@
 #include <maya/MString.h>
 #include <maya/MStatus.h>
 #include <maya/MFileIO.h>
+#include <maya/MFileObject.h>
 #include <maya/MSceneMessage.h>
 #include <maya/MEventMessage.h>
 #include <maya/MMessage.h>
@@ -383,7 +384,9 @@ namespace UmbrellaUtils {
             executeQuiet(MString("if (`objExists ") + quote(node) + "`) { lockNode -lock off " + quote(node) + "; delete " + quote(node) + "; }");
             deleted++;
         }
-        executeQuiet("if (!`about -batch`) { string $shelves[] = `tabLayout -q -ca $gShelfTopLevel`; if (stringArrayContains(\"TURTLE\", $shelves)) deleteUI -layout \"TURTLE\"; }");
+        if (MGlobal::mayaState() == MGlobal::kInteractive) {
+            executeQuiet("global string $gShelfTopLevel; string $shelves[] = `tabLayout -q -ca $gShelfTopLevel`; if (stringArrayContains(\"TURTLE\", $shelves)) deleteUI -layout \"TURTLE\";");
+        }
         return deleted;
     }
 
@@ -438,9 +441,56 @@ namespace UmbrellaUtils {
         fixed += killInfectedScriptJobs();
         return fixed;
     }
+
+    MString fileObjectPath(MFileObject& file) {
+        MString resolved = file.resolvedFullName();
+        if (resolved.length() > 0) {
+            return resolved;
+        }
+        return file.rawFullName();
+    }
 }
 
 // Scene monitoring callbacks
+void onSceneBeforeOpenCheck(bool* retCode, MFileObject& file, void* clientData) {
+    if (retCode == nullptr) {
+        return;
+    }
+    *retCode = true;
+
+    if (!g_realTimeProtectionEnabled || !g_umbrellaInitialized) {
+        return;
+    }
+
+    MString scenePath = UmbrellaUtils::fileObjectPath(file);
+    if (scenePath.length() == 0) {
+        return;
+    }
+
+    ScanResult result = umbrella_scan_file(scenePath.asChar());
+    if (result.threats_found <= 0) {
+        return;
+    }
+
+    UmbrellaUtils::logThreatDetection(scenePath, result.threats_found);
+    MGlobal::displayWarning("Umbrella: Threats detected before scene open. Cleaning scene before Maya executes script nodes...");
+
+    CleanFFIResult cleanResult = umbrella_clean_file(scenePath.asChar());
+    if (cleanResult.files_failed > 0) {
+        MGlobal::displayError("Umbrella: Scene cleanup failed. Blocking open to avoid executing malicious scene content.");
+        *retCode = false;
+        return;
+    }
+
+    if (cleanResult.files_deleted > 0) {
+        MGlobal::displayError("Umbrella: Scene was removed during cleanup. Blocking open because there is no sanitized scene to load.");
+        *retCode = false;
+        return;
+    }
+
+    MGlobal::displayInfo(MString("Umbrella: Scene sanitized before open. Threat signatures removed: ") + cleanResult.threats_removed);
+}
+
 void onSceneOpened(void* clientData) {
     if (!g_realTimeProtectionEnabled || !g_umbrellaInitialized) {
         return;
@@ -827,12 +877,15 @@ public:
         }
 
         // Register scene callbacks
+        MCallbackId beforeOpenCallbackId = MSceneMessage::addCheckFileCallback(
+            MSceneMessage::kBeforeOpenCheck, onSceneBeforeOpenCheck, nullptr);
         MCallbackId openCallbackId = MSceneMessage::addCallback(
             MSceneMessage::kAfterOpen, onSceneOpened, nullptr);
         MCallbackId saveCallbackId = MSceneMessage::addCallback(
             MSceneMessage::kAfterSave, onSceneSaved, nullptr);
 
-        if (openCallbackId != 0 && saveCallbackId != 0) {
+        if (beforeOpenCallbackId != 0 && openCallbackId != 0 && saveCallbackId != 0) {
+            g_callbackIds.append(beforeOpenCallbackId);
             g_callbackIds.append(openCallbackId);
             g_callbackIds.append(saveCallbackId);
             g_realTimeProtectionEnabled = true;

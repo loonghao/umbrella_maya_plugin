@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,6 +51,27 @@ jobs:
           - name: macos
             os: macos-15-intel
             rust_target: x86_64-apple-darwin
+        exclude:
+          - maya_version: "2018"
+            platform:
+              name: macos
+              os: macos-15-intel
+              rust_target: x86_64-apple-darwin
+          - maya_version: "2021"
+            platform:
+              name: windows
+              os: windows-latest
+              rust_target: x86_64-pc-windows-msvc
+          - maya_version: "2021"
+            platform:
+              name: linux
+              os: ubuntu-latest
+              rust_target: x86_64-unknown-linux-gnu
+          - maya_version: "2021"
+            platform:
+              name: macos
+              os: macos-15-intel
+              rust_target: x86_64-apple-darwin
 
     steps:
       - uses: actions/checkout@v6
@@ -119,5 +141,72 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: dist/release/*.zip
-          generate_release_notes: true
+          generate_release_notes: false
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+  python-wheels:
+    name: Python wheel (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: windows
+            os: windows-latest
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Build Python wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --features python --strip --out dist/wheels
+          manylinux: auto
+
+      - name: Upload Python wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.platform.name }}
+          path: dist/wheels/*.whl
+          retention-days: 30
+
+  publish-pypi:
+    name: Publish Python wheels to PyPI
+    needs: python-wheels
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release == true && inputs.release_tag != '')
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+    steps:
+      - name: Download Python wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: python-wheels-*
+          path: dist/wheels
+          merge-multiple: true
+
+      - name: Publish to PyPI with API token
+        if: env.PYPI_API_TOKEN != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/wheels
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+      - name: Publish to PyPI with trusted publishing
+        if: env.PYPI_API_TOKEN == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/wheels
+          skip-existing: true
