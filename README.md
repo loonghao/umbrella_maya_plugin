@@ -226,6 +226,10 @@ Use the `Justfile` recipes instead of the legacy one-off scripts:
 # Rust checks and all non-Maya runtime outputs
 vx just preflight
 
+# Install and run commit-time auto-fix/check hooks
+vx prek install
+vx prek run --all-files
+
 # Build the installable Maya module package for one version
 vx just package 2024
 
