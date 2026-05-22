@@ -19,9 +19,11 @@ macos = "Mac"
 [devkit.urls]
 
 # Maya 2018
-# Public Autodesk S3 URLs for Maya 2018 currently return 403.
-# CI supports this version through secrets/environment overrides:
-# MAYA_DEVKIT_URL_2018_WINDOWS, MAYA_DEVKIT_URL_2018_LINUX, MAYA_DEVKIT_URL_2018_MACOS.
+[devkit.urls."2018"]
+windows = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2018/Maya2018-DEVKIT_Windows.zip"
+linux = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M%26E/Maya/devkit+2018/Maya2018_DEVKIT_Linux.tgz"
+# Public Autodesk S3 URLs for Maya 2018 macOS currently return 403.
+# The build tool still supports MAYA_DEVKIT_URL_2018_MACOS when a private URL is available.
 
 # Maya 2019
 [devkit.urls."2019"]
@@ -37,7 +39,7 @@ macos = "https://autodesk-adn-transfer.s3.us-west-2.amazonaws.com/ADN+Extranet/M
 
 # Maya 2021
 # Public Autodesk S3 URLs for Maya 2021 currently return 403.
-# CI supports this version through secrets/environment overrides:
+# The build tool still supports this version through secrets/environment overrides:
 # MAYA_DEVKIT_URL_2021_WINDOWS, MAYA_DEVKIT_URL_2021_LINUX, MAYA_DEVKIT_URL_2021_MACOS.
 
 # Maya 2022
