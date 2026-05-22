@@ -29,7 +29,7 @@
 #include <maya/MSelectionList.h>
 
 // Include the generated Rust bindings
-#include "build/include/umbrella_maya_plugin.h"
+#include "umbrella_maya_plugin.h"
 
 #include <iostream>
 #include <fstream>
