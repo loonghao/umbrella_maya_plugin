@@ -168,10 +168,13 @@ fixed = scanner.scan_files_from_pattern("D:/show/**/*.ma")
 
 ### CI and Release Matrix
 
-GitHub Actions now has two maintained workflows:
+GitHub Actions has three maintained workflows:
 
-- `CI`: runs Rust format/check/clippy/tests and builds CLI + Python extension on Windows, Linux, and macOS.
-- `Release`: builds Maya 2018 through 2026 on Windows, Linux, and macOS, then uploads one zip per Maya version/platform.
+- `CI`: runs Rust format/check/clippy/tests, builds CLI + Python extension on Windows, Linux, and macOS, and smoke-builds Maya 2024 plugin packages.
+- `Release Please`: runs on every push to `main`, maintains the release PR from conventional commits, and publishes the GitHub Release when that PR is merged.
+- `Release`: builds Maya 2018 through 2026 on Windows, Linux, and macOS, then uploads one zip per Maya version/platform. It can be started manually, by tag push, or by `Release Please` through `workflow_dispatch`.
+
+`Release Please` uses `secrets.RELEASE_PLEASE_TOKEN` when it exists, then falls back to `GITHUB_TOKEN`. Configure `RELEASE_PLEASE_TOKEN` as a fine-grained PAT with repository contents and pull request write access if you need CI to run on release PRs created by release-please. The artifact build does not rely on tag push events; after a release is created it explicitly dispatches `release.yml` for the release tag.
 
 Autodesk public DevKit URLs are configured for Maya 2019, 2020, and 2022-2026. At the time of writing, Autodesk's public S3 URLs for Maya 2018 and 2021 return 403, so the release workflow accepts private override URLs through repository secrets:
 
@@ -199,20 +202,18 @@ cargo run --bin cargo-maya-build -- --platform windows --maya-version 2024
 
 ### Manual Build
 
-1. **Build Rust library:**
-   ```bash
-   cargo build --release
-   ```
+Use the `Justfile` recipes instead of the legacy one-off scripts:
 
-2. **Build C++ plugin:**
-   ```bash
-   # Windows (with Maya DevKit)
-   build_with_devkit.bat
+```bash
+# Rust checks and all non-Maya runtime outputs
+vx just preflight
 
-   # Linux/macOS
-   cmake -B build -DMAYA_VERSION=2024
-   cmake --build build --config Release
-   ```
+# Build the installable Maya module package for one version
+vx just package 2024
+
+# Build Maya module, Python extension, and CLI
+vx just package-current 2024
+```
 
 ### Installation
 
@@ -251,15 +252,21 @@ cargo run --bin cargo-maya-build -- --platform windows --maya-version 2024
 
 ```
 umbrella_maya_plugin/
+├── .github/workflows/      # CI, release-please, and release artifact builds
+├── crates/umbrella-core/   # Domain scanning and cleaning logic
+├── cmake/                  # Maya SDK discovery and plugin linker helpers
+├── docs/                   # Architecture notes
+├── scripts/                # Packaging, install, and artifact validation scripts
 ├── src/
 │   ├── lib.rs              # Main library entry point
 │   ├── error.rs            # Error handling
+│   ├── maya/               # C++ Maya plugin adapter
+│   ├── python.rs           # umbrella_maya Python extension
 │   ├── ffi/                # FFI bindings to Maya C++ API
 │   ├── wrapper/            # Safe Rust wrappers
 │   ├── commands/           # Maya command implementations
-│   └── antivirus/          # Antivirus functionality
+│   └── bin/                # cargo-maya-build and umbrella-maya CLI
 ├── build.rs                # Build script for Maya SDK detection
-├── wrapper.h               # C++ header for bindgen
 └── tests/                  # Integration tests
 ```
 

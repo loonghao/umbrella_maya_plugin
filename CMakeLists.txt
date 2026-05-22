@@ -75,7 +75,7 @@ include_directories(
 
 # Create the Maya plugin using our helper function
 add_maya_plugin(UmbrellaMayaPlugin
-    SOURCES UmbrellaMayaPlugin.cpp
+    SOURCES src/maya/umbrella_maya_plugin.cpp
     LIBRARIES ${RUST_LINK_LIB}
 )
 
