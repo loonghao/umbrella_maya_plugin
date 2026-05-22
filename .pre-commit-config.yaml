@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: vx cargo fmt
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+      - id: cargo-clippy-fix
+        name: cargo clippy --fix
+        entry: vx cargo clippy --fix --workspace --all-targets --features python --allow-dirty --allow-staged -- -D warnings
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: vx cargo clippy --workspace --all-targets --features python -- -D warnings
+        language: system
+        pass_filenames: false
+        types: [rust]
