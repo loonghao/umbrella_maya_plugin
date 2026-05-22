@@ -230,14 +230,17 @@ impl BackupCleaner {
         content: &[u8],
         options: &CleanOptions,
     ) -> Result<(Vec<u8>, usize)> {
+        let (content, maya_ascii_removals) = remove_infected_maya_ascii_blocks(file_path, content);
         let signatures = if options.aggressive {
             aggressive_clean_signatures()
         } else {
             default_clean_signatures()
         };
-        replace_content_by_signatures(content, &signatures).map_err(|err| {
-            UmbrellaError::Antivirus(format!("Failed to clean {}: {}", file_path, err))
-        })
+        let (cleaned, signature_removals) = replace_content_by_signatures(&content, &signatures)
+            .map_err(|err| {
+                UmbrellaError::Antivirus(format!("Failed to clean {}: {}", file_path, err))
+            })?;
+        Ok((cleaned, maya_ascii_removals + signature_removals))
     }
 }
 
@@ -327,6 +330,106 @@ fn replace_content_by_signatures(
     }
 
     Ok((current, removals))
+}
+
+fn remove_infected_maya_ascii_blocks(file_path: &str, content: &[u8]) -> (Vec<u8>, usize) {
+    if !file_path
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.eq_ignore_ascii_case("ma"))
+        .unwrap_or(false)
+    {
+        return (content.to_vec(), 0);
+    }
+
+    let Ok(text) = std::str::from_utf8(content) else {
+        return (content.to_vec(), 0);
+    };
+
+    let lines = split_lines_preserving_endings(text);
+    let mut output = String::with_capacity(text.len());
+    let mut removed_nodes = Vec::new();
+    let mut removals = 0usize;
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let line = lines[index];
+        if !is_top_level_create_node(line) {
+            if !line_references_removed_node(line, &removed_nodes) {
+                output.push_str(line);
+            }
+            index += 1;
+            continue;
+        }
+
+        let block_start = index;
+        index += 1;
+        while index < lines.len() && !is_top_level_create_node(lines[index]) {
+            index += 1;
+        }
+        let block = lines[block_start..index].concat();
+        let node_name = created_node_name(lines[block_start]);
+
+        if is_infected_maya_ascii_block(node_name.as_deref(), &block) {
+            if let Some(name) = node_name {
+                removed_nodes.push(name);
+            }
+            removals += 1;
+        } else {
+            output.push_str(&block);
+        }
+    }
+
+    if removals == 0 {
+        (content.to_vec(), 0)
+    } else {
+        (output.into_bytes(), removals)
+    }
+}
+
+fn split_lines_preserving_endings(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split_inclusive('\n').collect()
+    }
+}
+
+fn is_top_level_create_node(line: &str) -> bool {
+    line.starts_with("createNode ")
+}
+
+fn created_node_name(line: &str) -> Option<String> {
+    let marker = "-n \"";
+    let start = line.find(marker)? + marker.len();
+    let end = line[start..].find('"')? + start;
+    Some(line[start..end].to_string())
+}
+
+fn is_infected_maya_ascii_block(node_name: Option<&str>, block: &str) -> bool {
+    if let Some(name) = node_name {
+        if name == "maya_secure_system_scriptNode"
+            || name == "codeExtractor"
+            || name.starts_with("codeChunk")
+        {
+            return true;
+        }
+    }
+
+    [
+        "Maya Secure System Stager",
+        "import maya_secure_system",
+        "maya_secure_system.MayaSecureSystem().startup()",
+        "codeExtractor",
+        "codeChunk",
+    ]
+    .iter()
+    .any(|signature| block.contains(signature))
+}
+
+fn line_references_removed_node(line: &str, removed_nodes: &[String]) -> bool {
+    removed_nodes.iter().any(|node| {
+        line.contains(&format!("\"{}.", node)) || line.contains(&format!("\"{}\"", node))
+    })
 }
 
 fn backup_path(source_path: &Path, backup_root: Option<&str>) -> Result<PathBuf> {
@@ -424,6 +527,41 @@ mod tests {
         assert_eq!(removals, 1);
         assert!(!String::from_utf8_lossy(&cleaned).contains("import vaccine"));
         assert!(String::from_utf8_lossy(&cleaned).contains("print('Hello')"));
+    }
+
+    #[test]
+    fn test_clean_maya_ascii_removes_secure_system_script_node_block() {
+        let cleaner = BackupCleaner::new();
+        let malicious_content = br#"createNode transform -n "safe_before";
+createNode script -n "maya_secure_system_scriptNode";
+	rename -uid "29B1D497-4AEC-74AC-C85E-8D95FF66C6A6";
+	setAttr ".b" -type "string" (
+		"import maya_secure_system\nMaya Secure System Stager\ncodeExtractor\n"
+		+ "codeChunk0\n");
+	setAttr ".a" -type "string"
+		"eJzsvXl3FLfyPv5/XoU5QGITk9vqVkvqCwQw+w5e2D6";
+	setAttr ".st" 2;
+	setAttr ".stp" 1;
+createNode network -n "codeExtractor";
+	addAttr -ln "chunkCount" -at "long";
+createNode network -n "codeChunk0";
+	addAttr -ln "codeFragment" -dt "string";
+connectAttr "codeExtractor.message" "codeChunk0.dynamicInput";
+createNode transform -n "safe_after";
+"#;
+
+        let (cleaned, removals) = cleaner
+            .clean_file_content("scene.ma", malicious_content, &CleanOptions::default())
+            .unwrap();
+        let cleaned = String::from_utf8(cleaned).unwrap();
+
+        assert_eq!(removals, 3);
+        assert!(cleaned.contains("safe_before"));
+        assert!(cleaned.contains("safe_after"));
+        assert!(!cleaned.contains("maya_secure_system_scriptNode"));
+        assert!(!cleaned.contains("codeExtractor"));
+        assert!(!cleaned.contains("codeChunk0"));
+        assert!(!cleaned.contains("eJzsvXl3"));
     }
 
     #[test]

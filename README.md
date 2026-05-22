@@ -166,6 +166,10 @@ scanner = umbrella_maya.MayaVirusScanner()
 fixed = scanner.scan_files_from_pattern("D:/show/**/*.ma")
 ```
 
+Release tags also build PyPI wheels for Windows, Linux, and macOS through
+`release.yml`. Configure PyPI trusted publishing for this repository, or add a
+`PYPI_API_TOKEN` repository secret.
+
 ### CI and Release Matrix
 
 GitHub Actions has three maintained workflows:
@@ -176,7 +180,12 @@ GitHub Actions has three maintained workflows:
 
 `Release Please` uses `secrets.RELEASE_PLEASE_TOKEN` when it exists, then falls back to `GITHUB_TOKEN`. Configure `RELEASE_PLEASE_TOKEN` as a fine-grained PAT with repository contents and pull request write access if you need CI to run on release PRs created by release-please. The artifact build does not rely on tag push events; after a release is created it explicitly dispatches `release.yml` for the release tag.
 
-Autodesk public DevKit URLs are configured for Maya 2019, 2020, and 2022-2026. At the time of writing, Autodesk's public S3 URLs for Maya 2018 and 2021 return 403, so the release workflow accepts private override URLs through repository secrets:
+Autodesk public DevKit URLs are configured for Maya 2019, 2020, and 2022-2026.
+Maya 2018 Windows and Linux use the older public archive names that still return
+200. At the time of writing, Autodesk's public S3 URLs for Maya 2018 macOS and
+Maya 2021 return 403, so the default release matrix skips those builds. The
+build tool accepts private override URLs through repository secrets/environment
+variables if those matrix entries are restored later:
 
 ```text
 MAYA_DEVKIT_URL_2018_WINDOWS
@@ -186,6 +195,15 @@ MAYA_DEVKIT_URL_2021_WINDOWS
 MAYA_DEVKIT_URL_2021_LINUX
 MAYA_DEVKIT_URL_2021_MACOS
 ```
+
+For a real Maya standalone smoke after packaging:
+
+```bash
+powershell -File scripts/run-maya-standalone-smoke.ps1 -MayaVersion 2024
+```
+
+Pass `-Mayapy` when running inside a Docker Maya image or another custom Maya
+install location.
 
 You can also run the Rust build tool directly:
 

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "umbrella-maya-plugin"
+description = "Python bindings for the Umbrella Maya antivirus scanner and cleaner."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    { name = "Maya Umbrella Team" },
+    { name = "loonghao", email = "hal.long@outlook.com" },
+]
+keywords = ["maya", "antivirus", "security", "plugin"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Security",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/loonghao/umbrella_maya_plugin"
+Repository = "https://github.com/loonghao/umbrella_maya_plugin"
+Issues = "https://github.com/loonghao/umbrella_maya_plugin/issues"
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["python"]
+module-name = "umbrella_maya"
