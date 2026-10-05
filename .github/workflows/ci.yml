@@ -115,8 +115,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
+          # Maya 2024 certifies Visual Studio 2022, so the Windows lane is pinned to
+          # the windows-2022 image instead of following the newest hosted image.
           - name: windows
-            os: windows-latest
+            os: windows-2022
             rust_target: x86_64-pc-windows-msvc
           - name: linux
             os: ubuntu-latest
@@ -173,3 +175,37 @@ jobs:
           path: |
             dist/maya2024-${{ matrix.platform.name }}/**
             dist/modules/*maya2024-${{ matrix.platform.name }}/**
+
+      - name: Upload Linux module package for standalone smoke
+        if: matrix.platform.name == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: maya-module-2024-linux
+          path: dist/modules
+          if-no-files-found: error
+
+  maya-standalone-smoke:
+    name: Maya 2024 standalone smoke (tahv/mayapy)
+    runs-on: ubuntu-latest
+    needs: maya-plugin
+    container:
+      image: tahv/mayapy:2024
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Restore Linux Maya module package
+        uses: actions/download-artifact@v5
+        with:
+          name: maya-module-2024-linux
+          path: dist/modules
+
+      - name: Report the mayapy build
+        run: |
+          mayapy -c 'import maya.standalone; maya.standalone.initialize(); from maya import cmds; print("mayapy reports Maya", cmds.about(version=True))'
+
+      - name: Load the packaged plugin in Maya 2024
+        run: |
+          mayapy scripts/maya_standalone_smoke.py \
+            --maya-version 2024 \
+            --package-root dist/modules \
+            --scene tests/virus/uifiguration.ma

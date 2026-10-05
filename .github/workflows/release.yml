@@ -42,8 +42,10 @@ jobs:
       matrix:
         maya_version: ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
         platform:
+          # Maya 2024 and newer certify Visual Studio 2022, so Windows release builds
+          # stay on the windows-2022 image instead of following the newest hosted image.
           - name: windows
-            os: windows-latest
+            os: windows-2022
             rust_target: x86_64-pc-windows-msvc
           - name: linux
             os: ubuntu-latest
@@ -60,7 +62,7 @@ jobs:
           - maya_version: "2021"
             platform:
               name: windows
-              os: windows-latest
+              os: windows-2022
               rust_target: x86_64-pc-windows-msvc
           - maya_version: "2021"
             platform:
@@ -152,7 +154,7 @@ jobs:
       matrix:
         platform:
           - name: windows
-            os: windows-latest
+            os: windows-2022
           - name: linux
             os: ubuntu-latest
           - name: macos

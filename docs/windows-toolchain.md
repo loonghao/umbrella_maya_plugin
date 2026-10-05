@@ -19,6 +19,12 @@ reports it in `cmake --help`; otherwise CMake chooses its own default. Pass
 `--cmake-generator` to select one explicitly, for example in a build farm that
 standardizes on a single Visual Studio release.
 
+Because generator detection follows the image, CI selects the image instead:
+every Windows Maya build lane (`.github/workflows/ci.yml` and
+`.github/workflows/release.yml`) runs on `windows-2022`, which ships the
+Visual Studio 2022 toolchain certified for Maya 2024 and newer. Do not move
+those lanes back to a floating image.
+
 ## Optional msvc-kit and Ninja
 
 Normal Visual Studio builds use the detected generator. A compatible
@@ -43,13 +49,19 @@ developer shell. Maya Windows builds target x64.
 ## Artifact and host checks
 
 ```powershell
+scripts/test-maya-artifacts.ps1 -MayaVersion 2024 -Platform windows
 scripts/test-maya-artifacts.ps1 -MayaVersion 2024 -Platform windows -DumpbinPath C:/toolchains/msvc/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/dumpbin.exe
 scripts/run-maya-standalone-smoke.ps1 -MayaVersion 2024 -CleanEnvironment
 ```
 
-The optional dependency check verifies both packaged PE binaries, the plugin's
+The dependency check verifies both packaged PE binaries, the plugin's
 Rust DLL import and the absence of debug CRT imports, then saves the dependency
-list. When a portable query record exists, artifact validation also saves the
+list. On Windows it always runs: `dumpbin.exe` is detected through `vswhere`
+(newest `VC/Tools/MSVC/<toolset>/bin/Hostx64/x64`) and a missing toolchain fails
+validation instead of skipping the checks. `-DumpbinPath` only overrides that
+detection for portable toolchains.
+
+When a portable query record exists, artifact validation also saves the
 selected `cl.exe` SHA256 to `build/compiler-provenance.json`; the selection
 fingerprint alone describes metadata rather than compiler bytes.
 It does not claim that every dependency is deployable to another machine.
