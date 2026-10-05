@@ -161,9 +161,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
           # Prebuilt cbindgen binaries can require a newer glibc than this image provides,
-          # so build it from source whenever the one on PATH cannot run here.
+          # so build it from source whenever the one on PATH cannot run here. --force is
+          # needed because cargo skips an already installed package even when it is broken.
           if ! cbindgen --version >/dev/null 2>&1; then
-            cargo install cbindgen --version "^0.29" --locked
+            cargo install cbindgen --version "^0.29" --locked --force
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
 
