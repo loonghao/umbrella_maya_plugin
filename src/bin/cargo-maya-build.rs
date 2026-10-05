@@ -102,7 +102,10 @@ struct PlatformConfig {
     plugin_ext: String,
     lib_ext: String,
     devkit_platform: String,
-    cmake_generator: String,
+    /// Generator used when the platform has a stable one. Windows stays `None`
+    /// because hosted images move between Visual Studio releases, so the
+    /// generator is detected from the installed instances instead.
+    cmake_generator: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,6 +331,34 @@ impl BuildContext {
     fn log_warning(&self, message: &str) {
         println!("{} {}", "[warn]".yellow(), message.yellow());
     }
+
+    /// Chooses the CMake generator for a build.
+    ///
+    /// An explicit `--cmake-generator` override always wins. Non-Windows
+    /// platforms keep their stable generator. Windows detects the newest
+    /// installed Visual Studio instead of pinning one release, because hosted
+    /// images move between Visual Studio versions; with no supported instance
+    /// we omit `-G` and let CMake pick its own default.
+    fn resolve_cmake_generator(&self, config: &PlatformConfig) -> Option<String> {
+        if let Some(generator) = &self.cmake_generator {
+            return Some(generator.clone());
+        }
+        if let Some(generator) = &config.cmake_generator {
+            return Some(generator.clone());
+        }
+        match detect_visual_studio_generator() {
+            Some(generator) => {
+                self.log_verbose(&format!("Detected CMake generator: {}", generator));
+                Some(generator)
+            }
+            None => {
+                self.log_warning(
+                    "No supported Visual Studio instance detected; using CMake's default generator",
+                );
+                None
+            }
+        }
+    }
 }
 
 fn detect_platform() -> Result<Platform> {
@@ -370,7 +401,7 @@ fn create_build_config() -> BuildConfig {
             plugin_ext: ".mll".to_string(),
             lib_ext: ".dll".to_string(),
             devkit_platform: "win".to_string(),
-            cmake_generator: "Visual Studio 17 2022".to_string(),
+            cmake_generator: None,
         },
     );
 
@@ -381,7 +412,7 @@ fn create_build_config() -> BuildConfig {
             plugin_ext: ".so".to_string(),
             lib_ext: ".so".to_string(),
             devkit_platform: "linux".to_string(),
-            cmake_generator: "Unix Makefiles".to_string(),
+            cmake_generator: Some("Unix Makefiles".to_string()),
         },
     );
 
@@ -392,7 +423,7 @@ fn create_build_config() -> BuildConfig {
             plugin_ext: ".bundle".to_string(),
             lib_ext: ".dylib".to_string(),
             devkit_platform: "osx".to_string(),
-            cmake_generator: "Unix Makefiles".to_string(),
+            cmake_generator: Some("Unix Makefiles".to_string()),
         },
     );
 
@@ -410,6 +441,98 @@ fn create_build_config() -> BuildConfig {
         ],
         platforms,
     }
+}
+
+/// Parses a Visual Studio `installationVersion` such as `17.14.37111.16`.
+fn parse_visual_studio_version(version: &str) -> Option<(u32, u32, u32, u32)> {
+    let mut parts = version
+        .trim()
+        .split('.')
+        .map(|part| part.trim().parse().ok());
+    let major = parts.next()??;
+    let minor = parts.next().flatten().unwrap_or(0);
+    let patch = parts.next().flatten().unwrap_or(0);
+    let build = parts.next().flatten().unwrap_or(0);
+    Some((major, minor, patch, build))
+}
+
+/// Maps a Visual Studio major version to its CMake generator name.
+///
+/// Unknown majors return `None` so callers fall back to CMake's own default
+/// instead of requesting a generator this mapping cannot name correctly.
+fn visual_studio_generator(major: u32) -> Option<String> {
+    let year = match major {
+        15 => "2017",
+        16 => "2019",
+        17 => "2022",
+        18 => "2026",
+        _ => return None,
+    };
+    Some(format!("Visual Studio {} {}", major, year))
+}
+
+/// Picks the newest generator from `vswhere` output, one version per line.
+fn newest_visual_studio_generator(vswhere_output: &str) -> Option<String> {
+    let mut versions: Vec<(u32, u32, u32, u32)> = vswhere_output
+        .lines()
+        .filter_map(parse_visual_studio_version)
+        .collect();
+    versions.sort_unstable_by(|left, right| right.cmp(left));
+    versions
+        .into_iter()
+        .find_map(|(major, _, _, _)| visual_studio_generator(major))
+}
+
+/// Reports whether `cmake --help` lists a generator on this host.
+fn cmake_supports_generator(cmake_help: &str, generator: &str) -> bool {
+    cmake_help.lines().any(|line| {
+        // The default generator is prefixed with `*` in `cmake --help` output.
+        let candidate = line.trim_start().trim_start_matches('*').trim_start();
+        let Some(rest) = candidate.strip_prefix(generator) else {
+            return false;
+        };
+        rest.starts_with(char::is_whitespace) || rest.starts_with('=')
+    })
+}
+
+/// Detects the newest Visual Studio instance this host can build with.
+///
+/// Returns `None` when no instance is installed, when `vswhere` is unavailable,
+/// or when the local CMake is too old to know the detected generator; in those
+/// cases the caller lets CMake choose its own default.
+fn detect_visual_studio_generator() -> Option<String> {
+    let program_files = env::var("ProgramFiles(x86)")
+        .or_else(|_| env::var("ProgramFiles"))
+        .ok()?;
+    let vswhere = Path::new(&program_files)
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    if !vswhere.is_file() {
+        return None;
+    }
+    let install_output = Command::new(&vswhere)
+        .args([
+            "-products",
+            "*",
+            "-format",
+            "value",
+            "-property",
+            "installationVersion",
+        ])
+        .output()
+        .ok()?;
+    if !install_output.status.success() {
+        return None;
+    }
+    let generator =
+        newest_visual_studio_generator(&String::from_utf8_lossy(&install_output.stdout))?;
+    let cmake_help = Command::new("cmake").arg("--help").output().ok()?;
+    if !cmake_help.status.success() {
+        return None;
+    }
+    cmake_supports_generator(&String::from_utf8_lossy(&cmake_help.stdout), &generator)
+        .then_some(generator)
 }
 
 impl BuildContext {
@@ -927,11 +1050,9 @@ impl BuildContext {
         ];
 
         // Platform-specific generator
-        let generator = self
-            .cmake_generator
-            .as_deref()
-            .unwrap_or(&config.cmake_generator);
-        cmake_args.extend(["-G".to_string(), generator.to_owned()]);
+        if let Some(generator) = self.resolve_cmake_generator(config) {
+            cmake_args.extend(["-G".to_string(), generator]);
+        }
         if let Some(toolchain) = &self.toolchain {
             cmake_args.push(format!("-DCMAKE_CXX_COMPILER={}", toolchain.tools["cl"]));
             cmake_args.push(format!("-DCMAKE_C_COMPILER={}", toolchain.tools["cl"]));
@@ -1493,6 +1614,50 @@ mod tests {
                 .contains("requested Maya 2025")
         );
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn visual_studio_generators_follow_the_installed_major_version() {
+        assert_eq!(
+            visual_studio_generator(18).as_deref(),
+            Some("Visual Studio 18 2026")
+        );
+        assert_eq!(
+            visual_studio_generator(17).as_deref(),
+            Some("Visual Studio 17 2022")
+        );
+        assert_eq!(visual_studio_generator(14), None);
+        // A future release is not guessed; CMake picks its own default instead.
+        assert_eq!(visual_studio_generator(19), None);
+    }
+
+    #[test]
+    fn newest_installed_visual_studio_wins() {
+        let output = "17.14.37111.16\r\n18.1.11309.65\r\n15.9.37506.8\r\n";
+        assert_eq!(
+            newest_visual_studio_generator(output).as_deref(),
+            Some("Visual Studio 18 2026")
+        );
+        assert_eq!(
+            newest_visual_studio_generator("17.14.37111.16\n17.4.33213.308\n").as_deref(),
+            Some("Visual Studio 17 2022")
+        );
+        assert_eq!(newest_visual_studio_generator(""), None);
+        assert_eq!(newest_visual_studio_generator("14.0.25420.1"), None);
+    }
+
+    #[test]
+    fn generator_support_is_read_from_cmake_help() {
+        let help = "The following generators are available on this platform:\n".to_owned()
+            + "  Visual Studio 18 2026        = Generates Visual Studio 2026 project files.\n"
+            + "* Visual Studio 17 2022        = Generates Visual Studio 2022 project files.\n"
+            + "  Unix Makefiles               = Generates standard UNIX makefiles.\n";
+        assert!(cmake_supports_generator(&help, "Visual Studio 18 2026"));
+        assert!(cmake_supports_generator(&help, "Visual Studio 17 2022"));
+        assert!(cmake_supports_generator(&help, "Unix Makefiles"));
+        assert!(!cmake_supports_generator(&help, "Visual Studio 16 2019"));
+        // A prefix must not match a longer generator name.
+        assert!(!cmake_supports_generator(&help, "Unix Make"));
     }
 
     #[test]
