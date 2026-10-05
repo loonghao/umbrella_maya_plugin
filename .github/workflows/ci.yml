@@ -120,8 +120,12 @@ jobs:
           - name: windows
             os: windows-2022
             rust_target: x86_64-pc-windows-msvc
+          # Maya 2024's certified Linux hosts run glibc 2.28-2.35 with libstdc++ up to
+          # GLIBCXX_3.4.29. The newest Ubuntu image ships glibc 2.39 with GCC 13, so the
+          # plugin it builds requires GLIBC_2.38 / GLIBCXX_3.4.32 and cannot load on those
+          # hosts. The Linux lane is pinned to the newest image inside the certified range.
           - name: linux
-            os: ubuntu-latest
+            os: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
           - name: macos
             os: macos-15-intel
@@ -198,6 +202,12 @@ jobs:
         with:
           name: maya-module-2024-linux
           path: dist/modules
+
+      - name: Report the mayapy host baseline
+        run: |
+          . /etc/os-release
+          echo "host: ${PRETTY_NAME:-unknown}"
+          ldd --version | head -n 1
 
       - name: Report the mayapy build
         run: |

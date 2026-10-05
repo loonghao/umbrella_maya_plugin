@@ -97,11 +97,6 @@ elseif(UNIX)
         BUILD_RPATH "$ORIGIN"
         INSTALL_RPATH "$ORIGIN"
     )
-    # Autodesk's certified Maya 2024 Linux hosts ship an older libstdc++ than the
-    # build image, so the plugin requires GLIBCXX versions the host does not have
-    # and fails to load. Link the C++ runtime into the plugin instead of resolving
-    # it on the host. libgcc stays dynamic so unwinding is shared with Maya.
-    target_link_options(UmbrellaMayaPlugin PRIVATE "-static-libstdc++")
 endif()
 
 if(WIN32)
