@@ -8,7 +8,7 @@ param(
 
     [switch]$RequireReleaseArchive,
 
-    # Optional selected-toolchain dumpbin executable for Windows dependency checks.
+    # Overrides the auto-detected dumpbin used for Windows dependency checks.
     [string]$DumpbinPath = ""
 )
 
@@ -40,6 +40,40 @@ $RuntimeLibrary = switch ($Platform) {
 }
 
 $PluginBinary = "umbrella_maya$PluginExtension"
+
+function Resolve-Dumpbin {
+    $Vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    $SearchRoots = @()
+    if (Test-Path -LiteralPath $Vswhere -PathType Leaf) {
+        $Installations = & $Vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($LASTEXITCODE -eq 0) {
+            $SearchRoots += @($Installations | Where-Object { $_ })
+        }
+    }
+    $SearchRoots += (Join-Path $env:ProgramFiles "Microsoft Visual Studio")
+    $SearchRoots = @($SearchRoots | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+
+    $Dumpbin = $SearchRoots |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -Recurse -File -Filter "dumpbin.exe" -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\\VC\\Tools\\MSVC\\([^\\]+)\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        Path = $_.FullName
+                        Toolset = [version]($_.FullName -replace '^.*\\VC\\Tools\\MSVC\\([^\\]+)\\.*$', '$1')
+                    }
+                }
+        } |
+        Sort-Object -Property Toolset -Descending |
+        Select-Object -First 1
+
+    if (-not $Dumpbin) {
+        throw "dumpbin.exe not found. Windows artifact checks need a Visual Studio installation with the x64 VC tools, or pass -DumpbinPath explicitly."
+    }
+
+    Write-Host "[ok] Detected dumpbin $($Dumpbin.Toolset): $($Dumpbin.Path)"
+    return $Dumpbin.Path
+}
 
 function Assert-FileMatch {
     param(
@@ -79,10 +113,13 @@ Assert-FileMatch -RootPath $ModuleRoot -Pattern "UmbrellaMayaPlugin.mod" -Descri
 Assert-FileMatch -RootPath $ModuleRoot -Pattern $PluginBinary -Description "Maya module package"
 Assert-FileMatch -RootPath $ModuleRoot -Pattern $RuntimeLibrary -Description "Maya module package"
 
-if ($DumpbinPath) {
-    if ($Platform -ne "windows" -or -not (Test-Path -LiteralPath $DumpbinPath -PathType Leaf)) {
-        throw "-DumpbinPath requires a Windows artifact and an existing dumpbin executable"
+if ($Platform -eq "windows") {
+    if ([string]::IsNullOrWhiteSpace($DumpbinPath)) {
+        $DumpbinPath = Resolve-Dumpbin
+    } elseif (-not (Test-Path -LiteralPath $DumpbinPath -PathType Leaf)) {
+        throw "-DumpbinPath does not point at an existing dumpbin executable: $DumpbinPath"
     }
+
     $Report = @()
     foreach ($BinaryName in @($PluginBinary, $RuntimeLibrary)) {
         $Binary = Get-ChildItem -LiteralPath $ModuleRoot -Recurse -File -Filter $BinaryName | Select-Object -First 1

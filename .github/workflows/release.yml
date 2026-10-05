@@ -42,11 +42,17 @@ jobs:
       matrix:
         maya_version: ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"]
         platform:
+          # Maya 2024 and newer certify Visual Studio 2022, so Windows release builds
+          # stay on the windows-2022 image instead of following the newest hosted image.
           - name: windows
-            os: windows-latest
+            os: windows-2022
             rust_target: x86_64-pc-windows-msvc
+          # Certified Maya Linux hosts run glibc 2.28-2.35 with libstdc++ up to
+          # GLIBCXX_3.4.29. The newest Ubuntu image ships glibc 2.39 with GCC 13, so the
+          # plugin it builds requires GLIBC_2.38 / GLIBCXX_3.4.32 and fails to load there.
+          # Linux release builds stay on the image inside the certified range.
           - name: linux
-            os: ubuntu-latest
+            os: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
           - name: macos
             os: macos-15-intel
@@ -60,12 +66,12 @@ jobs:
           - maya_version: "2021"
             platform:
               name: windows
-              os: windows-latest
+              os: windows-2022
               rust_target: x86_64-pc-windows-msvc
           - maya_version: "2021"
             platform:
               name: linux
-              os: ubuntu-latest
+              os: ubuntu-22.04
               rust_target: x86_64-unknown-linux-gnu
           - maya_version: "2021"
             platform:
@@ -103,6 +109,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
+          # Prebuilt cbindgen binaries can require a newer glibc than this image provides,
+          # so build it from source whenever the one on PATH cannot run here. --force is
+          # needed because cargo skips an already installed package even when it is broken.
+          if ! cbindgen --version >/dev/null 2>&1; then
+            cargo install cbindgen --version "^0.29" --locked --force
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
@@ -152,9 +165,9 @@ jobs:
       matrix:
         platform:
           - name: windows
-            os: windows-latest
+            os: windows-2022
           - name: linux
-            os: ubuntu-latest
+            os: ubuntu-22.04
           - name: macos
             os: macos-15-intel
 
