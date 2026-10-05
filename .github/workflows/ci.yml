@@ -192,6 +192,31 @@ jobs:
 
       - name: Build Maya module package
         run: vx just package 2024
+
+      - name: Verify macOS plugin entry points
+        if: matrix.platform.name == 'macos'
+        run: |
+          # GitHub has no macOS Maya runner, so the bundle is never loaded here; see
+          # docs/maya-standalone-smoke.md for the manual acceptance that covers the load.
+          # The next best gate is the Mach-O export table, because Maya resolves the entry
+          # points by their undecorated names and -exported_symbol is what emits them.
+          plugin="$(find dist -type f -name 'umbrella_maya.bundle' | head -n 1)"
+          if [ -z "$plugin" ]; then
+            echo "::error::umbrella_maya.bundle was not produced under dist"
+            exit 1
+          fi
+          exports="$(nm -gU "$plugin" | awk '{print $NF}')"
+          for symbol in _initializePlugin _uninitializePlugin; do
+            if ! printf '%s\n' "$exports" | grep -qx "$symbol"; then
+              echo "::error::$plugin does not export $symbol"
+              exit 1
+            fi
+          done
+          if ! otool -l "$plugin" | grep -q '@loader_path'; then
+            echo "::error::$plugin has no @loader_path rpath, so it cannot find the packaged Rust library"
+            exit 1
+          fi
+          echo "[ok] $plugin exports both plugin entry points and resolves its runtime via @loader_path"
       - name: Validate Maya plugin artifacts
         shell: pwsh
         run: scripts/test-maya-artifacts.ps1 -MayaVersion 2024 -Platform ${{ matrix.platform.name }}
@@ -213,6 +238,11 @@ jobs:
           if-no-files-found: error
 
   maya-standalone-smoke:
+    name: Maya 2024 standalone smoke (tahv/mayapy)
+    # Not pinned on purpose: every step runs inside the tahv/mayapy:2024 container, so
+    # the host only supplies the kernel and Docker and cannot shift the glibc baseline
+    # the plugin is loaded against. Pinning it like the build lanes would imply a host
+    # dependency this job does not have.
     runs-on: ubuntu-latest
     needs: maya-plugin
     container:
