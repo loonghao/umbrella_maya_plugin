@@ -6,12 +6,26 @@ param(
     [ValidateSet("windows", "linux", "macos")]
     [string]$Platform,
 
-    [switch]$RequireReleaseArchive
+    [switch]$RequireReleaseArchive,
+
+    # Optional selected-toolchain dumpbin executable for Windows dependency checks.
+    [string]$DumpbinPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+
+# msvc-kit fingerprints describe selected metadata; capture the actual compiler bytes too.
+$ToolchainRecord = Join-Path $Root "build/toolchain.json"
+if (Test-Path -LiteralPath $ToolchainRecord) {
+    $Toolchain = Get-Content -LiteralPath $ToolchainRecord -Raw | ConvertFrom-Json
+    if ($Toolchain.tools.cl) {
+        $CompilerHash = Get-FileHash -LiteralPath $Toolchain.tools.cl -Algorithm SHA256
+        @{ compiler = $Toolchain.tools.cl; sha256 = $CompilerHash.Hash.ToLowerInvariant() } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Root "build/compiler-provenance.json") -Encoding UTF8
+    }
+}
 
 $PluginExtension = switch ($Platform) {
     "windows" { ".mll" }
@@ -64,6 +78,37 @@ $ModuleRoot = $ModulePackages[0].FullName
 Assert-FileMatch -RootPath $ModuleRoot -Pattern "UmbrellaMayaPlugin.mod" -Description "Maya module package"
 Assert-FileMatch -RootPath $ModuleRoot -Pattern $PluginBinary -Description "Maya module package"
 Assert-FileMatch -RootPath $ModuleRoot -Pattern $RuntimeLibrary -Description "Maya module package"
+
+if ($DumpbinPath) {
+    if ($Platform -ne "windows" -or -not (Test-Path -LiteralPath $DumpbinPath -PathType Leaf)) {
+        throw "-DumpbinPath requires a Windows artifact and an existing dumpbin executable"
+    }
+    $Report = @()
+    foreach ($BinaryName in @($PluginBinary, $RuntimeLibrary)) {
+        $Binary = Get-ChildItem -LiteralPath $ModuleRoot -Recurse -File -Filter $BinaryName | Select-Object -First 1
+        $Headers = & $DumpbinPath /headers $Binary.FullName
+        if ($LASTEXITCODE -ne 0 -or -not ($Headers -match "8664 machine")) {
+            throw "$BinaryName is not a readable x64 PE artifact"
+        }
+        $Dependents = & $DumpbinPath /dependents $Binary.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cannot inspect dependencies of $BinaryName"
+        }
+        $Dependencies = @($Dependents | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.-]+\.dll$' })
+        if (-not $Dependencies) {
+            throw "No DLL imports found for $BinaryName"
+        }
+        if ($Dependencies -match '^(msvcp\d+d|vcruntime\d+(?:_\d+)?d|ucrtbased)\.dll$') {
+            throw "$BinaryName imports a debug CRT"
+        }
+        if ($BinaryName -eq $PluginBinary -and $Dependencies -notcontains $RuntimeLibrary) {
+            throw "$PluginBinary does not import the packaged Rust runtime $RuntimeLibrary"
+        }
+        $Report += "$BinaryName`: $($Dependencies -join ', ')"
+    }
+    $Report | Set-Content -LiteralPath (Join-Path $ModuleRoot "windows-dependencies.txt") -Encoding UTF8
+    Write-Host "[ok] Windows package has x64 PE binaries, a packaged Rust import, and no debug CRT imports"
+}
 
 if ($RequireReleaseArchive) {
     $ReleaseArchive = Get-ChildItem -LiteralPath (Join-Path $Root "dist/release") -File -Filter "UmbrellaMayaPlugin-*-maya$MayaVersion-$Platform.zip" -ErrorAction Stop | Select-Object -First 1

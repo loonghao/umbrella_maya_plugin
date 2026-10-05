@@ -141,16 +141,23 @@ if(EXISTS "${MAYA_INCLUDE_DIR}/maya/MTypes.h")
     file(READ "${MAYA_INCLUDE_DIR}/maya/MTypes.h" MAYA_TYPES_CONTENT)
     
     # Extract version numbers
-    string(REGEX MATCH "#define MAYA_API_VERSION ([0-9]+)" MAYA_API_VERSION_MATCH "${MAYA_TYPES_CONTENT}")
+    string(REGEX MATCH "#[ \t]*define[ \t]+MAYA_API_VERSION[ \t]+([0-9]+)" MAYA_API_VERSION_MATCH "${MAYA_TYPES_CONTENT}")
     if(MAYA_API_VERSION_MATCH)
         set(MAYA_API_VERSION ${CMAKE_MATCH_1})
         
-        # Convert API version to major.minor
-        math(EXPR MAYA_VERSION_MAJOR "${MAYA_API_VERSION} / 100")
-        math(EXPR MAYA_VERSION_MINOR "${MAYA_API_VERSION} % 100")
+        # Modern API versions encode YYYYMMpp (for example 20240205).
+        math(EXPR MAYA_VERSION_MAJOR "${MAYA_API_VERSION} / 10000")
+        math(EXPR MAYA_VERSION_MINOR "(${MAYA_API_VERSION} / 100) % 100")
+        if(NOT MAYA_VERSION_MAJOR EQUAL MAYA_VERSION)
+            message(FATAL_ERROR "Maya SDK API ${MAYA_API_VERSION} targets Maya ${MAYA_VERSION_MAJOR}, requested ${MAYA_VERSION}: ${MAYA_INCLUDE_DIR}")
+        endif()
         
         message(STATUS "Detected Maya API version: ${MAYA_API_VERSION} (${MAYA_VERSION_MAJOR}.${MAYA_VERSION_MINOR})")
+    else()
+        message(FATAL_ERROR "Cannot verify MAYA_API_VERSION in ${MAYA_INCLUDE_DIR}/maya/MTypes.h")
     endif()
+else()
+    message(FATAL_ERROR "Maya SDK is missing ${MAYA_INCLUDE_DIR}/maya/MTypes.h")
 endif()
 
 # Maya compiler definitions by version

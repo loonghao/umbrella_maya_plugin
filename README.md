@@ -220,6 +220,10 @@ cargo run --bin cargo-maya-build -- --platform windows --maya-version 2024
 
 ### Manual Build
 
+See the [Windows toolchain contract](docs/windows-toolchain.md) for SDK version
+checks, optional msvc-kit/Ninja builds, dependency inspection and isolated mayapy
+smoke tests.
+
 Use the `Justfile` recipes instead of the legacy one-off scripts:
 
 ```bash
