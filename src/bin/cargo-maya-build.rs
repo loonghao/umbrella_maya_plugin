@@ -57,6 +57,30 @@ struct MayaBuildArgs {
     /// Clean build directories
     #[arg(long)]
     clean: bool,
+
+    /// CMake generator override (portable Windows toolchains use Ninja)
+    #[arg(long)]
+    cmake_generator: Option<String>,
+
+    /// Optional compatible msvc-kit executable; never installs a toolchain
+    #[arg(long, requires_all = ["msvc_version", "sdk_version"])]
+    msvc_kit: Option<PathBuf>,
+
+    /// Full installed MSVC version for the optional portable Windows build
+    #[arg(long, requires = "msvc_kit")]
+    msvc_version: Option<String>,
+
+    /// Full installed Windows SDK version for the optional portable build
+    #[arg(long, requires = "msvc_kit")]
+    sdk_version: Option<String>,
+
+    /// Existing msvc-kit installation directory
+    #[arg(long, requires = "msvc_kit")]
+    msvc_dir: Option<PathBuf>,
+
+    /// Host tool architecture; Maya's Windows target remains x64
+    #[arg(long, default_value = "x64", value_parser = ["x64", "x86", "arm64"])]
+    host_arch: String,
 }
 
 #[derive(Clone, Debug, ValueEnum, PartialEq)]
@@ -120,6 +144,23 @@ struct BuildContext {
     config: BuildConfig,
     devkit_config: Option<DevKitConfig>,
     verbose: bool,
+    cmake_generator: Option<String>,
+    toolchain: Option<ToolchainQuery>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolchainQuery {
+    env_vars: HashMap<String, String>,
+    tools: HashMap<String, String>,
+    msvc: ToolchainComponent,
+    sdk: ToolchainComponent,
+    arch: String,
+    host_arch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolchainComponent {
+    version: String,
 }
 
 impl BuildContext {
@@ -140,7 +181,130 @@ impl BuildContext {
             config,
             devkit_config,
             verbose,
+            cmake_generator: None,
+            toolchain: None,
         })
+    }
+
+    fn configure_toolchain(&mut self, args: &MayaBuildArgs) -> Result<()> {
+        self.cmake_generator = args.cmake_generator.clone();
+        let Some(executable) = &args.msvc_kit else {
+            return Ok(());
+        };
+        if self.current_platform != Platform::Windows
+            || args.all_platforms
+            || args
+                .platform
+                .as_ref()
+                .is_some_and(|p| *p != Platform::Windows)
+        {
+            bail!("--msvc-kit requires a native Windows build");
+        }
+        if self
+            .cmake_generator
+            .as_deref()
+            .is_some_and(|g| g != "Ninja")
+        {
+            bail!("--msvc-kit requires the Ninja generator");
+        }
+        let msvc = args
+            .msvc_version
+            .as_deref()
+            .context("Missing --msvc-version")?;
+        let sdk = args
+            .sdk_version
+            .as_deref()
+            .context("Missing --sdk-version")?;
+        if !is_full_version(msvc, 3) || !is_full_version(sdk, 4) {
+            bail!("Portable builds require full MSVC and SDK versions");
+        }
+        let selectors = [
+            "--msvc-version",
+            msvc,
+            "--sdk-version",
+            sdk,
+            "--arch",
+            "x64",
+            "--host-arch",
+            &args.host_arch,
+        ];
+        let mut doctor = Command::new(executable);
+        doctor
+            .args(["doctor", "--format", "json", "--compile"])
+            .args(selectors);
+        if let Some(directory) = &args.msvc_dir {
+            doctor.arg("--dir").arg(directory);
+        }
+        let output = doctor.output().context("Failed to run msvc-kit doctor")?;
+        if !output.status.success() {
+            bail!(
+                "Selected toolchain failed doctor: {}",
+                command_output_summary(&output)
+            );
+        }
+        let doctor_report = output.stdout;
+        let mut query = Command::new(executable);
+        query.args(["query", "--format", "json"]).args(selectors);
+        if let Some(directory) = &args.msvc_dir {
+            query.arg("--dir").arg(directory);
+        }
+        let output = query.output().context("Failed to run msvc-kit query")?;
+        if !output.status.success() {
+            bail!(
+                "Toolchain query failed: {}",
+                command_output_summary(&output)
+            );
+        }
+        let mut toolchain: ToolchainQuery = serde_json::from_slice(&output.stdout)
+            .context("msvc-kit query returned an incompatible JSON contract")?;
+        if toolchain.msvc.version != msvc
+            || toolchain.sdk.version != sdk
+            || toolchain.arch != "x64"
+            || toolchain.host_arch != args.host_arch
+        {
+            bail!("msvc-kit resolved a different toolchain than requested");
+        }
+        if toolchain.env_vars.is_empty()
+            || !toolchain.tools.contains_key("cl")
+            || !toolchain.tools.contains_key("link")
+        {
+            bail!("msvc-kit query did not resolve the compiler, linker and environment");
+        }
+        let inherited_path = env::var("PATH").unwrap_or_default();
+        let selected_path = toolchain
+            .env_vars
+            .get("PATH")
+            .context("Missing toolchain PATH")?;
+        toolchain.env_vars.insert(
+            "PATH".to_owned(),
+            format!("{};{}", selected_path, inherited_path),
+        );
+        toolchain.env_vars.insert(
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER".to_owned(),
+            toolchain.tools["link"].clone(),
+        );
+        let report_dir = self.project_root.join("build");
+        std::fs::create_dir_all(&report_dir)?;
+        std::fs::write(report_dir.join("toolchain.json"), &output.stdout)?;
+        std::fs::write(report_dir.join("doctor.json"), doctor_report)?;
+        self.cmake_generator = Some("Ninja".to_owned());
+        self.toolchain = Some(toolchain);
+        self.log_success(&format!(
+            "Selected MSVC {} / SDK {} for Cargo and Ninja",
+            msvc, sdk
+        ));
+        Ok(())
+    }
+
+    fn build_command(&self, program: &str) -> Command {
+        let mut command = Command::new(program);
+        if let Some(toolchain) = &self.toolchain {
+            command.envs(&toolchain.env_vars);
+            command.env_remove("CMAKE_GENERATOR_PLATFORM");
+            command.env_remove("CMAKE_GENERATOR_TOOLSET");
+            command.env_remove("CMAKE_GENERATOR_INSTANCE");
+        }
+        command
     }
 
     fn log(&self, message: &str) {
@@ -250,6 +414,12 @@ fn create_build_config() -> BuildConfig {
 
 impl BuildContext {
     async fn setup_devkit(&self, maya_version: &str) -> Result<()> {
+        // Explicit SDK roots are a contract; do not replace a mismatched root.
+        for variable in ["MAYA_ROOT_DIR", "MAYA_LOCATION"] {
+            if let Ok(root) = env::var(variable) {
+                validate_maya_sdk_version(Path::new(&root), maya_version)?;
+            }
+        }
         let platform_name = platform_to_string(&self.current_platform);
         if let Some(platform_config) = self.config.platforms.get(&platform_name)
             && let Ok(existing_sdk) =
@@ -285,6 +455,12 @@ impl BuildContext {
         }
 
         self.log_success("Maya DevKit setup complete");
+        let platform_config = self
+            .config
+            .platforms
+            .get(&platform_name)
+            .context("Missing platform configuration")?;
+        self.resolve_maya_sdk_dir(&self.current_platform, platform_config, maya_version)?;
         Ok(())
     }
 
@@ -351,12 +527,16 @@ impl BuildContext {
 
         for candidate in candidates {
             if is_maya_sdk_dir(&candidate) {
-                return Ok(candidate);
+                match validate_maya_sdk_version(&candidate, maya_version) {
+                    Ok(()) => return Ok(candidate),
+                    Err(error) => self.log_verbose(&error.to_string()),
+                }
             }
         }
 
         bail!(
-            "Maya SDK/DevKit not found for {}. Checked: {}",
+            "Maya {} SDK/DevKit with matching MAYA_API_VERSION not found for {}. Checked: {}",
+            maya_version,
             platform_name,
             checked.join(", ")
         );
@@ -602,7 +782,24 @@ impl BuildContext {
             .get(&platform_name)
             .context("Platform not found in config")?;
 
-        let mut cmd = Command::new("cargo");
+        let mut cmd = self.build_command("cargo");
+        if *platform == Platform::Windows {
+            for variable in [
+                "RUSTFLAGS",
+                "CARGO_ENCODED_RUSTFLAGS",
+                "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS",
+            ] {
+                if env::var(variable)
+                    .unwrap_or_default()
+                    .contains("+crt-static")
+                {
+                    bail!(
+                        "{} enables a static CRT; the Maya plugin requires the DLL CRT",
+                        variable
+                    );
+                }
+            }
+        }
         cmd.args(["build", "--release", "--target", &config.rust_target]);
         self.log_verbose(&format!(
             "Running: cargo build --release --target {}",
@@ -730,11 +927,20 @@ impl BuildContext {
         ];
 
         // Platform-specific generator
-        cmake_args.extend(["-G".to_string(), config.cmake_generator.clone()]);
+        let generator = self
+            .cmake_generator
+            .as_deref()
+            .unwrap_or(&config.cmake_generator);
+        cmake_args.extend(["-G".to_string(), generator.to_owned()]);
+        if let Some(toolchain) = &self.toolchain {
+            cmake_args.push(format!("-DCMAKE_CXX_COMPILER={}", toolchain.tools["cl"]));
+            cmake_args.push(format!("-DCMAKE_C_COMPILER={}", toolchain.tools["cl"]));
+        }
 
         self.log_verbose(&format!("Running: cmake {}", cmake_args.join(" ")));
 
-        let cmake_output = Command::new("cmake")
+        let cmake_output = self
+            .build_command("cmake")
             .args(&cmake_args)
             .current_dir(&build_dir)
             .output()
@@ -750,7 +956,8 @@ impl BuildContext {
         // Build
         self.log_verbose("Running: cmake --build . --config Release");
 
-        let build_output = Command::new("cmake")
+        let build_output = self
+            .build_command("cmake")
             .args(["--build", ".", "--config", "Release"])
             .current_dir(&build_dir)
             .output()
@@ -1007,6 +1214,56 @@ fn is_maya_sdk_dir(path: &Path) -> bool {
             .exists()
 }
 
+fn is_full_version(version: &str, components: usize) -> bool {
+    let parts: Vec<&str> = version.split('.').collect();
+    parts.len() == components
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn maya_api_year(header: &str) -> Result<u32> {
+    let version = header
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() >= 3 && fields[0] == "#define" && fields[1] == "MAYA_API_VERSION" {
+                fields[2].parse::<u32>().ok()
+            } else {
+                None
+            }
+        })
+        .next()
+        .context("MTypes.h does not define a numeric MAYA_API_VERSION")?;
+    // Modern Maya encodes the year in the first four of eight digits.
+    let year = version / 10_000;
+    if !(2018..=2026).contains(&year) {
+        bail!("Unsupported MAYA_API_VERSION {}", version);
+    }
+    Ok(year)
+}
+
+fn validate_maya_sdk_version(root: &Path, requested: &str) -> Result<()> {
+    let normal = root.join("include/maya/MTypes.h");
+    let header = if normal.exists() {
+        normal
+    } else {
+        root.join("Maya.app/Contents/include/maya/MTypes.h")
+    };
+    let content = std::fs::read_to_string(&header)
+        .with_context(|| format!("Cannot read {}", header.display()))?;
+    let actual = maya_api_year(&content)?;
+    if actual.to_string() != requested {
+        bail!(
+            "SDK {} targets Maya {}, requested Maya {}",
+            root.display(),
+            actual,
+            requested
+        );
+    }
+    Ok(())
+}
+
 fn command_output_summary(output: &std::process::Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1037,7 +1294,7 @@ fn maya_module_file_content(platform_name: &str, maya_version: &str) -> String {
 async fn main() -> Result<()> {
     let args = MayaBuildArgs::parse();
 
-    let ctx = BuildContext::new(args.verbose)?;
+    let mut ctx = BuildContext::new(args.verbose)?;
 
     ctx.log("Starting Umbrella Maya Plugin build...");
 
@@ -1065,6 +1322,8 @@ async fn main() -> Result<()> {
         ctx.log_success("Build directories cleaned");
         return Ok(());
     }
+
+    ctx.configure_toolchain(&args)?;
 
     // Determine target platforms
     let platforms = if args.current_only {
@@ -1185,5 +1444,65 @@ async fn main() -> Result<()> {
     } else {
         ctx.log_error("\nSome builds failed!");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_year_accepts_updates_and_rejects_unverifiable_headers() {
+        assert_eq!(
+            maya_api_year("#define MAYA_API_VERSION 20240205").unwrap(),
+            2024
+        );
+        assert_eq!(
+            maya_api_year("\t#define\tMAYA_API_VERSION\t20250000 // SDK").unwrap(),
+            2025
+        );
+        assert!(maya_api_year("// #define MAYA_API_VERSION 20240000").is_err());
+        assert!(maya_api_year("#define MAYA_API_VERSION unknown").is_err());
+        assert!(maya_api_year("#define MAYA_API_VERSION 850").is_err());
+    }
+
+    #[test]
+    fn full_versions_cannot_silently_select_the_latest_patch() {
+        assert!(is_full_version("14.44.35207", 3));
+        assert!(is_full_version("10.0.26100.0", 4));
+        assert!(!is_full_version("14.44", 3));
+        assert!(!is_full_version("latest", 3));
+    }
+
+    #[test]
+    fn explicit_sdk_year_is_checked_before_compilation() {
+        let directory =
+            env::temp_dir().join(format!("umbrella-sdk-contract-{}", std::process::id()));
+        let headers = directory.join("include/maya");
+        std::fs::create_dir_all(&headers).unwrap();
+        std::fs::write(
+            headers.join("MTypes.h"),
+            "#define MAYA_API_VERSION 20240205",
+        )
+        .unwrap();
+        assert!(validate_maya_sdk_version(&directory, "2024").is_ok());
+        assert!(
+            validate_maya_sdk_version(&directory, "2025")
+                .unwrap_err()
+                .to_string()
+                .contains("requested Maya 2025")
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn portable_toolchain_requires_version_selectors() {
+        assert!(
+            MayaBuildArgs::try_parse_from(["cargo-maya-build", "--msvc-kit", "msvc-kit"]).is_err()
+        );
+        assert!(
+            MayaBuildArgs::try_parse_from(["cargo-maya-build", "--msvc-version", "14.44.35207"])
+                .is_err()
+        );
     }
 }
