@@ -127,10 +127,6 @@ unsafe extern "C" {
         index: c_int,
         status: *mut MStatus,
     ) -> c_double;
-
-    // Plugin entry points
-    pub fn initializePlugin(obj: MObject) -> MStatus;
-    pub fn uninitializePlugin(obj: MObject) -> MStatus;
 }
 
 /// Helper macros for working with Maya status codes

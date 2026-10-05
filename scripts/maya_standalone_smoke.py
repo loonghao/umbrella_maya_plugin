@@ -7,6 +7,10 @@ Run this with ``mayapy`` (never a plain CPython interpreter):
 
 It is the cross-platform entry point used by CI; ``run-maya-standalone-smoke.ps1``
 remains the Windows desktop-host gate.
+
+This is an ABI and liveness gate, not a detection gate: it proves a real Maya can
+load the plugin and dispatch its commands. It does not prove the scanner finds
+anything, and the ``[ok]`` lines must not be read as detection coverage.
 """
 
 from __future__ import annotations
@@ -96,12 +100,16 @@ def configure_environment(package: pathlib.Path, plugin: pathlib.Path, platform_
     os.environ["MAYA_PLUG_IN_PATH"] = str(plug_ins)
     os.environ["MAYA_APP_DIR"] = str(app_dir)
     os.environ["PYTHONNOUSERSITE"] = "1"
-    if platform_name == "linux":
-        prepend_path("LD_LIBRARY_PATH", plug_ins)
-    elif platform_name == "macos":
-        prepend_path("DYLD_LIBRARY_PATH", plug_ins)
-    else:
+    if platform_name == "windows":
+        # Windows resolves imports through PATH at load time and has no rpath
+        # equivalent, so the plug-ins directory has to be on PATH for the plugin to
+        # find its packaged Rust library.
         prepend_path("PATH", plug_ins)
+    # On Linux and macOS the plugin resolves that same library through its
+    # INSTALL_RPATH ($ORIGIN / @loader_path). Setting LD_LIBRARY_PATH or
+    # DYLD_LIBRARY_PATH here would be decorative: both loaders snapshot the
+    # environment when the process starts, so a change made after interpreter start
+    # cannot affect the dlopen() that loads the plugin.
     return app_dir
 
 
@@ -127,6 +135,11 @@ def load_plugin(plugin: pathlib.Path) -> None:
 def exercise_plugin(scene: pathlib.Path | None) -> None:
     from maya import cmds
 
+    # Each call only proves the command was dispatched and returned without raising.
+    # In particular umbrellaScanScene reporting "Threats found: 0" is not evidence that
+    # detection works: the bundled sample scenes are malformed on purpose and Maya opens
+    # them with warnings ("Unterminated string", "missing a 'requires' statement"), so
+    # the scan often runs against a scene that never finished loading.
     cmds.umbrellaInfo()
     cmds.umbrellaEnable()
     if scene is not None:

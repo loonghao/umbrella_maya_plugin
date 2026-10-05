@@ -174,7 +174,7 @@ Release tags also build PyPI wheels for Windows, Linux, and macOS through
 
 GitHub Actions has three maintained workflows:
 
-- `CI`: runs Rust format/check/clippy/tests, builds CLI + Python extension on Windows, Linux, and macOS, smoke-builds Maya 2024 plugin packages, validates the packaged Windows binaries with `dumpbin`, and loads the Linux Maya 2024 package in a real `tahv/mayapy:2024` Maya standalone session. See [Maya standalone smoke](docs/maya-standalone-smoke.md).
+- `CI`: runs Rust format/check/clippy/tests, builds CLI + Python extension on Windows, Linux, and macOS, smoke-builds Maya 2024 plugin packages, validates the packaged Windows binaries with `dumpbin`, checks the macOS bundle's exported plugin entry points, and loads the Linux Maya 2024 package in a real `tahv/mayapy:2024` Maya standalone session. See [Maya standalone smoke](docs/maya-standalone-smoke.md) for what the smoke does and does not prove.
 - `Release Please`: runs on every push to `main`, maintains the release PR from conventional commits, and publishes the GitHub Release when that PR is merged.
 - `Release`: builds Maya 2018 through 2026 on Windows, Linux, and macOS, then uploads one zip per Maya version/platform. It can be started manually, by tag push, or by `Release Please` through `workflow_dispatch`.
 

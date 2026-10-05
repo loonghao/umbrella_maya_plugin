@@ -17,11 +17,19 @@
 #     "-C", "link-arg=-Wl,-rpath,$ORIGIN",  # Set rpath for shared libraries
 # ]
 
-# [target.x86_64-apple-darwin]
-# macOS-specific settings (commented out to avoid issues)
-# rustflags = [
-#     "-C", "link-arg=-Wl,-rpath,@loader_path",  # Set rpath for shared libraries
-# ]
+[target.x86_64-apple-darwin]
+# Give the cdylib a relocatable install name. Without it the build records the absolute
+# path of the cargo output, the Maya bundle links against that absolute path, and dyld
+# cannot find the runtime on any other machine. The bundle carries an @loader_path
+# rpath, so @rpath resolves to the copy shipped next to the plugin.
+rustflags = [
+    "-C", "link-arg=-Wl,-install_name,@rpath/libumbrella_maya_plugin.dylib",
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-Wl,-install_name,@rpath/libumbrella_maya_plugin.dylib",
+]
 
 # Environment variables for build scripts
 [env]

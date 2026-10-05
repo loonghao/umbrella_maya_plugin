@@ -26,6 +26,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Pinned so the cbindgen CLI that generates the C header matches the cbindgen library
+  # the build script uses (Cargo.lock pins the build-dependency). A caret requirement
+  # would follow new patch releases and would invalidate the binary cache below on
+  # every upstream release.
+  CBINDGEN_VERSION: "0.29.2"
   MAYA_DEVKIT_URL_2018_WINDOWS: ${{ secrets.MAYA_DEVKIT_URL_2018_WINDOWS }}
   MAYA_DEVKIT_URL_2018_LINUX: ${{ secrets.MAYA_DEVKIT_URL_2018_LINUX }}
   MAYA_DEVKIT_URL_2018_MACOS: ${{ secrets.MAYA_DEVKIT_URL_2018_MACOS }}
@@ -104,18 +109,31 @@ jobs:
           path: maya-devkit
           key: maya-devkit-${{ matrix.platform.name }}-${{ matrix.maya_version }}-${{ hashFiles('maya-devkit-config.toml') }}
 
+      - name: Cache cbindgen
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          # Building cbindgen from source costs about a minute on every one of the Linux
+          # lanes in this matrix. Swatinem/rust-cache does not cover $CARGO_HOME/bin, so
+          # the installed binary is cached here instead.
+          path: ~/.cargo/bin/cbindgen
+          key: cbindgen-${{ runner.os }}-${{ runner.arch }}-${{ env.CBINDGEN_VERSION }}
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
-          # Prebuilt cbindgen binaries can require a newer glibc than this image provides,
-          # so build it from source whenever the one on PATH cannot run here. --force is
-          # needed because cargo skips an already installed package even when it is broken.
+          # The CMake generate_bindings target and src/bin/cargo-maya-build.rs both shell
+          # out to the cbindgen CLI, so it has to keep working on PATH. Prebuilt cbindgen
+          # binaries can require a newer glibc than this image provides, so build the
+          # pinned version from source whenever the one on PATH cannot run here.
+          echo "cbindgen before install: $(cbindgen --version 2>/dev/null || echo 'missing or not runnable')"
           if ! cbindgen --version >/dev/null 2>&1; then
-            cargo install cbindgen --version "^0.29" --locked --force
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            cargo install cbindgen --version "=$CBINDGEN_VERSION" --locked --force
           fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          cbindgen --version
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'

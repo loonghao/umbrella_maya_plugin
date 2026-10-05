@@ -1,18 +1,75 @@
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = "Artifacts")]
     [string]$MayaVersion,
 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = "Artifacts")]
     [ValidateSet("windows", "linux", "macos")]
     [string]$Platform,
 
+    [Parameter(ParameterSetName = "Artifacts")]
     [switch]$RequireReleaseArchive,
 
     # Overrides the auto-detected dumpbin used for Windows dependency checks.
-    [string]$DumpbinPath = ""
+    [Parameter(ParameterSetName = "Artifacts")]
+    [string]$DumpbinPath = "",
+
+    # Checks the debug CRT pattern below against known import names without needing
+    # a Maya package or a Windows host.
+    [Parameter(Mandatory = $true, ParameterSetName = "SelfTest")]
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = "Stop"
+
+# Debug CRT imports that must fail the Windows artifact check. The msvcp part needs the
+# same optional "_<n>" suffix the vcruntime part already had: a debug build pulls in
+# msvcp140d.dll but can also pull in msvcp140_1d.dll and msvcp140_2d.dll.
+$DebugCrtPattern = '^(?:msvcp\d+(?:_\d+)?d|vcruntime\d+(?:_\d+)?d|ucrtbased)\.dll$'
+
+function Test-DebugCrtPattern {
+    $DebugImports = @(
+        "msvcp140d.dll",
+        "msvcp140_1d.dll",
+        "msvcp140_2d.dll",
+        "vcruntime140d.dll",
+        "vcruntime140_1d.dll",
+        "ucrtbased.dll"
+    )
+    $ReleaseImports = @(
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "ucrtbase.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll"
+    )
+
+    $Failures = @()
+    foreach ($Import in $DebugImports) {
+        if ($Import -notmatch $DebugCrtPattern) {
+            $Failures += "debug CRT import not detected: $Import"
+        }
+    }
+    foreach ($Import in $ReleaseImports) {
+        if ($Import -match $DebugCrtPattern) {
+            $Failures += "release CRT import rejected: $Import"
+        }
+    }
+
+    if ($Failures) {
+        $Failures | ForEach-Object { Write-Host "[fail] $_" }
+        throw "Debug CRT pattern self-test failed against $DebugCrtPattern"
+    }
+
+    Write-Host "[ok] Debug CRT pattern catches $($DebugImports -join ', ')"
+    Write-Host "[ok] Debug CRT pattern ignores $($ReleaseImports -join ', ')"
+    exit 0
+}
+
+if ($SelfTest) {
+    Test-DebugCrtPattern
+}
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 
@@ -135,8 +192,8 @@ if ($Platform -eq "windows") {
         if (-not $Dependencies) {
             throw "No DLL imports found for $BinaryName"
         }
-        if ($Dependencies -match '^(msvcp\d+d|vcruntime\d+(?:_\d+)?d|ucrtbased)\.dll$') {
-            throw "$BinaryName imports a debug CRT"
+        if ($Dependencies -match $DebugCrtPattern) {
+            throw "$BinaryName imports a debug CRT: $(@($Dependencies -match $DebugCrtPattern) -join ', ')"
         }
         if ($BinaryName -eq $PluginBinary -and $Dependencies -notcontains $RuntimeLibrary) {
             throw "$PluginBinary does not import the packaged Rust runtime $RuntimeLibrary"
