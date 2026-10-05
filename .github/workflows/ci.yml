@@ -160,6 +160,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake
+          # Prebuilt cbindgen binaries can require a newer glibc than this image provides,
+          # so build it from source whenever the one on PATH cannot run here.
+          if ! cbindgen --version >/dev/null 2>&1; then
+            cargo install cbindgen --version "^0.29" --locked
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
