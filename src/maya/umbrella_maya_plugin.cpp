@@ -937,18 +937,17 @@ public:
 // PLUGIN INITIALIZATION AND CLEANUP
 //==============================================================================
 
-// Maya resolves these entry points by their undecorated names, so they must keep C
-// linkage. The Linux version script and the macOS exported symbols list name them
-// without C++ decoration, and a decorated definition exports nothing at all.
-extern "C" {
-MStatus initializePlugin(MObject obj);
-MStatus uninitializePlugin(MObject obj);
-}
+// Maya looks a plugin's entry points up by their undecorated names, but the Maya
+// headers declare them with C++ linkage (PLUGIN_EXPORT only sets visibility), so they
+// are emitted as decorated symbols and cannot be redeclared as extern "C" here. The
+// implementations therefore carry internal names and the entry points below emit the
+// undecorated names: cmake/linux_plugin.map and the macOS -exported_symbol list both
+// name them that way, and on Windows the undecorated export comes from /export:.
 
 /**
  * Plugin initialization function
  */
-MStatus initializePlugin(MObject obj) {
+static MStatus initializePluginImpl(MObject obj) {
     MStatus status;
     MFnPlugin plugin(obj, kPluginVendor, kPluginVersion, "Any");
 
@@ -1009,7 +1008,7 @@ MStatus initializePlugin(MObject obj) {
 /**
  * Plugin cleanup function
  */
-MStatus uninitializePlugin(MObject obj) {
+static MStatus uninitializePluginImpl(MObject obj) {
     MStatus status;
     MFnPlugin plugin(obj);
 
@@ -1079,3 +1078,29 @@ MStatus uninitializePlugin(MObject obj) {
     MGlobal::displayInfo("Umbrella Maya Plugin unloaded successfully");
     return MS::kSuccess;
 }
+
+//==============================================================================
+// ENTRY POINTS MAYA RESOLVES
+//==============================================================================
+
+#ifdef _WIN32
+MStatus initializePlugin(MObject obj) {
+    return initializePluginImpl(obj);
+}
+
+MStatus uninitializePlugin(MObject obj) {
+    return uninitializePluginImpl(obj);
+}
+#else
+// The assembler names are what Maya's loader resolves, so they must be exactly these.
+MStatus umbrellaInitializePluginEntry(MObject obj) __asm__("initializePlugin");
+MStatus umbrellaUninitializePluginEntry(MObject obj) __asm__("uninitializePlugin");
+
+MStatus umbrellaInitializePluginEntry(MObject obj) {
+    return initializePluginImpl(obj);
+}
+
+MStatus umbrellaUninitializePluginEntry(MObject obj) {
+    return uninitializePluginImpl(obj);
+}
+#endif
