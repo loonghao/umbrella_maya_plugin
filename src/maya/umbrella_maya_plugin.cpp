@@ -937,6 +937,14 @@ public:
 // PLUGIN INITIALIZATION AND CLEANUP
 //==============================================================================
 
+// Maya resolves these entry points by their undecorated names, so they must keep C
+// linkage. The Linux version script and the macOS exported symbols list name them
+// without C++ decoration, and a decorated definition exports nothing at all.
+extern "C" {
+MStatus initializePlugin(MObject obj);
+MStatus uninitializePlugin(MObject obj);
+}
+
 /**
  * Plugin initialization function
  */
