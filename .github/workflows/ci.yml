@@ -217,6 +217,12 @@ jobs:
             exit 1
           fi
           echo "[ok] $plugin exports both plugin entry points and resolves its runtime via @loader_path"
+
+      - name: Verify the debug CRT import pattern
+        if: matrix.platform.name == 'windows'
+        shell: pwsh
+        run: scripts/test-maya-artifacts.ps1 -SelfTest
+
       - name: Validate Maya plugin artifacts
         shell: pwsh
         run: scripts/test-maya-artifacts.ps1 -MayaVersion 2024 -Platform ${{ matrix.platform.name }}
