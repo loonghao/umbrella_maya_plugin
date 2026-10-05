@@ -11,20 +11,6 @@ pub mod ffi;
 #[cfg(feature = "python")]
 mod python;
 
-// Maya status codes - these match Maya's MStatus values
-const MS_SUCCESS: c_int = 0; // MS::kSuccess
-#[allow(dead_code)]
-const MS_FAILURE: c_int = 1; // MS::kFailure
-
-/// Maya MObject representation
-/// For maximum compatibility, treat it as an opaque pointer
-/// This avoids any potential ABI issues with struct layout
-type MObject = *mut std::os::raw::c_void;
-
-/// Maya MStatus representation
-/// MStatus in Maya is essentially an integer status code
-type MStatus = c_int;
-
 /// cbindgen:derive-eq
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,26 +62,8 @@ pub extern "C" fn testFunction() -> c_int {
     42 // Return a test value
 }
 
-/// Maya plugin initialization function
-/// This function is called when the plugin is loaded by Maya
-///
-/// Using extern "C" to match Maya's expected calling convention
-/// The function signature must exactly match what Maya expects:
-/// extern "C" MStatus initializePlugin(MObject obj)
-#[unsafe(no_mangle)]
-pub extern "C" fn initializePlugin(_obj: MObject) -> MStatus {
-    // Just return success - minimal implementation
-    MS_SUCCESS
-}
-
-/// Maya plugin cleanup function
-/// This function is called when the plugin is unloaded by Maya
-///
-/// Using extern "C" to match Maya's expected calling convention
-/// The function signature must exactly match what Maya expects:
-/// extern "C" MStatus uninitializePlugin(MObject obj)
-#[unsafe(no_mangle)]
-pub extern "C" fn uninitializePlugin(_obj: MObject) -> MStatus {
-    // Just return success - minimal implementation
-    MS_SUCCESS
-}
+// The plugin entry points deliberately do not live here. The C++ plugin owns them,
+// and exporting no-op placeholders from the Rust cdylib is actively harmful: on macOS
+// the linker resolves the plugin's -exported_symbol list against whatever it can find,
+// so a placeholder named initializePlugin here is re-exported by the bundle instead of
+// the C++ implementation, and Maya ends up loading a plugin that registers no commands.

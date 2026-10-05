@@ -62,16 +62,29 @@ Linux artifact; Windows artifacts are covered by the `dumpbin` checks in
 ## macOS coverage
 
 There is no GitHub-hosted macOS Maya runner, so no CI job loads the macOS bundle.
-The macOS lane instead verifies the Mach-O export table, which is the part that
-actually broke on Linux: it asserts `umbrella_maya.bundle` exports
-`_initializePlugin` and `_uninitializePlugin` as global symbols and carries an
-`@loader_path` rpath so it can find the packaged Rust library. A bundle that fails
-those checks fails the lane before it is ever shipped.
+The macOS lane runs `scripts/check_macos_plugin_symbols.py` instead, which reads
+the Mach-O export trie - the table dyld answers `dlsym()` from - and asserts that:
 
-**Known unverified surface: the macOS bundle has never been loaded by a real
-Maya.** Build, packaging, and symbol exports are verified; the load itself is not.
-Owner: **hallong**. Until a real load is recorded, treat macOS artifacts as
-experimental.
+1. `_initializePlugin` and `_uninitializePlugin` are **regular exports of the
+   bundle itself**. A re-export means ld found the name in a linked dylib instead
+   of in the plugin, and Maya then calls the wrong implementation.
+2. the packaged Rust runtime is referenced by a **relocatable path**
+   (`@rpath/...`), not by the absolute path of the cargo output directory.
+3. the bundle carries an `@loader_path` rpath so `@rpath` resolves to the copy
+   shipped next to the plugin.
+
+Both checks matter because the symbols `nm` prints are not the ones dyld
+resolves. The entry points are emitted through `__asm__` labels, and on Mach-O a
+label without the leading underscore produces a symbol `dlsym()` never looks up:
+`nm` still shows an entry point, `-exported_symbol,_initializePlugin` matches
+nothing in the bundle, and ld quietly re-exports the same-named no-op placeholder
+from the Rust runtime instead. The bundle then reports a successful load and
+registers no commands.
+
+**Known unverified surface: no real Maya has loaded the macOS bundle.** Build,
+packaging, and the export table are verified; the load itself is not, and neither
+is command registration. Owner: **hallong**. Until a real load is recorded, treat
+macOS artifacts as experimental.
 
 To close that gap, run the smoke on a Mac with Maya 2024 installed:
 

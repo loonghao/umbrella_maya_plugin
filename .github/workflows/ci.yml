@@ -198,25 +198,15 @@ jobs:
         run: |
           # GitHub has no macOS Maya runner, so the bundle is never loaded here; see
           # docs/maya-standalone-smoke.md for the manual acceptance that covers the load.
-          # The next best gate is the Mach-O export table, because Maya resolves the entry
-          # points by their undecorated names and -exported_symbol is what emits them.
-          plugin="$(find dist -type f -name 'umbrella_maya.bundle' | head -n 1)"
-          if [ -z "$plugin" ]; then
+          # The next best gate is the dyld export table, which is what dlsym() answers
+          # from: the entry points have to be regular exports of the bundle itself, and
+          # the packaged Rust runtime has to be referenced by a relocatable path.
+          bundles=$(find dist -type f -name 'umbrella_maya.bundle')
+          if [ -z "$bundles" ]; then
             echo "::error::umbrella_maya.bundle was not produced under dist"
             exit 1
           fi
-          exports="$(nm -gU "$plugin" | awk '{print $NF}')"
-          for symbol in _initializePlugin _uninitializePlugin; do
-            if ! printf '%s\n' "$exports" | grep -qx "$symbol"; then
-              echo "::error::$plugin does not export $symbol"
-              exit 1
-            fi
-          done
-          if ! otool -l "$plugin" | grep -q '@loader_path'; then
-            echo "::error::$plugin has no @loader_path rpath, so it cannot find the packaged Rust library"
-            exit 1
-          fi
-          echo "[ok] $plugin exports both plugin entry points and resolves its runtime via @loader_path"
+          python3 scripts/check_macos_plugin_symbols.py $bundles
 
       - name: Verify the debug CRT import pattern
         if: matrix.platform.name == 'windows'

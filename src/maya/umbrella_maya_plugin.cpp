@@ -1091,8 +1091,24 @@ MStatus initializePlugin(MObject obj) {
 MStatus uninitializePlugin(MObject obj) {
     return uninitializePluginImpl(obj);
 }
-#else
+#elif defined(__APPLE__)
 // The assembler names are what Maya's loader resolves, so they must be exactly these.
+// Mach-O carries a leading underscore in the symbol table and dlsym() looks the name up
+// with that underscore, so the label has to spell it out: without it the entry point is
+// emitted as `initializePlugin`, -exported_symbol,_initializePlugin matches nothing in
+// this image, and ld re-exports a same-named symbol from a linked dylib instead.
+MStatus umbrellaInitializePluginEntry(MObject obj) __asm__("_initializePlugin");
+MStatus umbrellaUninitializePluginEntry(MObject obj) __asm__("_uninitializePlugin");
+
+MStatus umbrellaInitializePluginEntry(MObject obj) {
+    return initializePluginImpl(obj);
+}
+
+MStatus umbrellaUninitializePluginEntry(MObject obj) {
+    return uninitializePluginImpl(obj);
+}
+#else
+// ELF has no underscore prefix, so the undecorated name is what dlsym() looks up.
 MStatus umbrellaInitializePluginEntry(MObject obj) __asm__("initializePlugin");
 MStatus umbrellaUninitializePluginEntry(MObject obj) __asm__("uninitializePlugin");
 
