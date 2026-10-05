@@ -9,9 +9,19 @@ The C++ plugin uses the DLL CRT, matching Rust's default Windows `cdylib` policy
 The build CLI rejects `+crt-static` in Rust flag environment variables. Compiler
 and SDK compatibility constraints remain owned by the target Maya project.
 
+## Generator selection
+
+Windows builds detect the newest installed Visual Studio with `vswhere` and use
+matching generator, for example `Visual Studio 18 2026` or
+`Visual Studio 17 2022`. Hosted images move between Visual Studio releases, so no
+single release is pinned. The generator is only used when the local CMake
+reports it in `cmake --help`; otherwise CMake chooses its own default. Pass
+`--cmake-generator` to select one explicitly, for example in a build farm that
+standardizes on a single Visual Studio release.
+
 ## Optional msvc-kit and Ninja
 
-Normal Visual Studio builds continue to use the existing generator. A compatible
+Normal Visual Studio builds use the detected generator. A compatible
 msvc-kit CLI can select an existing portable toolchain without global environment
 or registry changes. This opt-in path requires the new `query --host-arch` and
 `doctor --compile` commands; no unreleased dependency is installed automatically.
