@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "umbrella_maya_plugin"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-fs",
