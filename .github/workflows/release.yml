@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -212,13 +211,18 @@ jobs:
           path: dist/wheels/*.whl
           retention-days: 30
 
-  publish-pypi:
-    name: Publish Python wheels to PyPI
-    needs: python-wheels
+  # Wheels are published as GitHub Release assets next to the Maya module zips, not to
+  # PyPI: this project ships as a Maya plugin and PyPI is not a distribution channel.
+  # This is a separate job rather than an extra glob on the 'Upload to GitHub Release'
+  # step above, because that step lives in the 24-lane Maya matrix and cannot see the
+  # python-wheels artifacts. Waiting on the whole build matrix costs no wall-clock time
+  # (the wheel lanes finish long before the slowest Maya lane) and keeps one softprops
+  # upload from racing the 24 concurrent ones.
+  attach-wheels:
+    name: Attach Python wheels to the GitHub Release
+    needs: [build, python-wheels]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release == true && inputs.release_tag != '')
-    env:
-      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release == true)
     steps:
       - name: Download Python wheels
         uses: actions/download-artifact@v5
@@ -227,17 +231,10 @@ jobs:
           path: dist/wheels
           merge-multiple: true
 
-      - name: Publish to PyPI with API token
-        if: env.PYPI_API_TOKEN != ''
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload Python wheels to GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
-          packages-dir: dist/wheels
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
+          files: dist/wheels/*.whl
+          generate_release_notes: false
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
 
-      - name: Publish to PyPI with trusted publishing
-        if: env.PYPI_API_TOKEN == ''
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/wheels
-          skip-existing: true
