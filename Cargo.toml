@@ -40,7 +40,14 @@ clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["json"] }
+# reqwest is only used by src/bin/cargo-maya-build.rs, but Cargo resolves dependencies
+# per package, so the wheel build (--lib) compiles it too. default-features = false with
+# rustls-tls swaps the TLS backend from native-tls to rustls and drops openssl-sys from
+# the graph entirely: the manylinux container that builds the Python wheels ships no
+# OpenSSL development package, so a native-tls build fails there with "No package
+# 'openssl' found". The other default features are listed explicitly so that only the
+# TLS backend changes (charset, http2, macos-system-configuration).
+reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls"] }
 zip = "4.0.0"
 walkdir = "2.0"
 colored = "3.0"
