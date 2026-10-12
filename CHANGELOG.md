@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/loonghao/umbrella_maya_plugin/compare/v0.3.1...v0.3.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* fail closed on unsafe binary scene cleanup ([9b852b1](https://github.com/loonghao/umbrella_maya_plugin/commit/9b852b1fa41a7758c6496cc2061c9d1a53475fbf)), closes [#3](https://github.com/loonghao/umbrella_maya_plugin/issues/3)
+
 ## [0.3.1](https://github.com/loonghao/umbrella_maya_plugin/compare/v0.3.0...v0.3.1) (2026-10-06)
 
 
