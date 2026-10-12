@@ -6,7 +6,7 @@ use std::ptr;
 use std::time::Instant;
 
 use crate::antivirus::AntivirusEngine;
-use crate::antivirus::cleaner::CleanStatus;
+use crate::antivirus::cleaner::{CleanResult, CleanStatus};
 use crate::antivirus::detector::PatternDetector;
 use crate::{CleanFFIResult, ScanResult, UmbrellaResult};
 
@@ -75,17 +75,7 @@ pub extern "C" fn umbrella_clean_file(file_path: *const c_char) -> CleanFFIResul
 
     let start = Instant::now();
     match AntivirusEngine::new().and_then(|engine| engine.clean_file(&path, &Default::default())) {
-        Ok(result) => {
-            let files_cleaned = matches!(result.status, CleanStatus::Success) as c_int;
-            let files_deleted = matches!(result.status, CleanStatus::Deleted) as c_int;
-            CleanFFIResult {
-                files_cleaned,
-                files_deleted,
-                files_failed: 0,
-                threats_removed: result.threats_removed as c_int,
-                scan_time_ms: start.elapsed().as_millis() as c_int,
-            }
-        }
+        Ok(result) => clean_ffi_result(&result, start.elapsed().as_millis() as c_int),
         Err(_) => clean_error(),
     }
 }
@@ -148,6 +138,20 @@ fn scan_error() -> ScanResult {
     }
 }
 
+fn clean_ffi_result(result: &CleanResult, scan_time_ms: c_int) -> CleanFFIResult {
+    CleanFFIResult {
+        files_cleaned: matches!(result.status, CleanStatus::Success) as c_int,
+        files_deleted: matches!(result.status, CleanStatus::Deleted) as c_int,
+        // Ok(CleanResult) describes a completed attempt, not necessarily success.
+        files_failed: (!matches!(
+            result.status,
+            CleanStatus::Success | CleanStatus::AlreadyClean | CleanStatus::Deleted
+        )) as c_int,
+        threats_removed: result.threats_removed as c_int,
+        scan_time_ms,
+    }
+}
+
 fn clean_error() -> CleanFFIResult {
     CleanFFIResult {
         files_cleaned: 0,
@@ -155,5 +159,64 @@ fn clean_error() -> CleanFFIResult {
         files_failed: 1,
         threats_removed: 0,
         scan_time_ms: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_clean_result_reaches_c_callers() {
+        for status in [
+            CleanStatus::Failed,
+            CleanStatus::Quarantined,
+            CleanStatus::BackupCreated,
+        ] {
+            let mut result = CleanResult::failed("scene.mb", "unsafe to clean");
+            result.status = status;
+            let ffi = clean_ffi_result(&result, 17);
+            assert_eq!(ffi.files_failed, 1);
+            assert_eq!(ffi.files_cleaned, 0);
+            assert_eq!(ffi.scan_time_ms, 17);
+        }
+    }
+
+    #[test]
+    fn successful_clean_statuses_are_distinct() {
+        for status in [
+            CleanStatus::Success,
+            CleanStatus::AlreadyClean,
+            CleanStatus::Deleted,
+        ] {
+            let mut result = CleanResult::already_clean("scene.ma");
+            result.status = status.clone();
+            let ffi = clean_ffi_result(&result, 0);
+            assert_eq!(ffi.files_failed, 0);
+            assert_eq!(ffi.files_cleaned, (status == CleanStatus::Success) as c_int);
+            assert_eq!(ffi.files_deleted, (status == CleanStatus::Deleted) as c_int);
+        }
+    }
+
+    #[test]
+    fn binary_file_cleanup_fails_without_mutation_through_ffi() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("asset.mb");
+        let original = b"FOR4\0\0\0\x20Mayaimport vaccine";
+        std::fs::write(&path, original).unwrap();
+        let path_c = CString::new(path.to_str().unwrap()).unwrap();
+        let ffi = umbrella_clean_file(path_c.as_ptr());
+        assert_eq!(ffi.files_failed, 1);
+        assert_eq!(ffi.files_cleaned, 0);
+        assert_eq!(ffi.files_deleted, 0);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn invalid_or_missing_paths_fail_through_ffi() {
+        assert_eq!(umbrella_clean_file(ptr::null()).files_failed, 1);
+        let temp = tempfile::tempdir().unwrap();
+        let missing = CString::new(temp.path().join("missing.ma").to_str().unwrap()).unwrap();
+        assert_eq!(umbrella_clean_file(missing.as_ptr()).files_failed, 1);
     }
 }

@@ -79,6 +79,9 @@ jobs:
           key: rust-${{ runner.os }}
           shared-key: rust-${{ runner.os }}
 
+      - name: Native cleanup guard unit tests (no Maya)
+        run: python -m unittest discover -s tests -p "test_native_clean_guards.py" -v
+
       - name: Preflight
         run: vx just preflight
 
@@ -268,3 +271,9 @@ jobs:
             --maya-version 2024 \
             --package-root dist/modules \
             --scene tests/virus/uifiguration.ma
+
+      - name: Verify binary pre-open safety with real Maya
+        run: |
+          mayapy scripts/maya_binary_safety_smoke.py \
+            --maya-version 2024 \
+            --package-root dist/modules

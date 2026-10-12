@@ -436,7 +436,9 @@ namespace UmbrellaUtils {
         if (!hookDisabled("fix_on_model_change_3dc")) {
             fixOnModelChange3dc();
         }
-        removeRenameTempFiles();
+        if (!hookDisabled("remove_rename_temp_files")) {
+            removeRenameTempFiles();
+        }
         fixed += fixInfectedScriptNodes();
         fixed += killInfectedScriptJobs();
         return fixed;
@@ -458,17 +460,29 @@ void onSceneBeforeOpenCheck(bool* retCode, MFileObject& file, void* clientData) 
     }
     *retCode = true;
 
-    if (!g_realTimeProtectionEnabled || !g_umbrellaInitialized) {
+    if (!g_realTimeProtectionEnabled) {
+        return;
+    }
+    if (!g_umbrellaInitialized) {
+        MGlobal::displayError("Umbrella: Protection is enabled but the scanner is unavailable. Blocking open.");
+        *retCode = false;
         return;
     }
 
     MString scenePath = UmbrellaUtils::fileObjectPath(file);
     if (scenePath.length() == 0) {
+        MGlobal::displayError("Umbrella: Cannot resolve scene path. Blocking open.");
+        *retCode = false;
         return;
     }
 
     ScanResult result = umbrella_scan_file(scenePath.asChar());
-    if (result.threats_found <= 0) {
+    if (result.threats_found < 0 || result.files_scanned != 1) {
+        MGlobal::displayError("Umbrella: Scene scan failed or was skipped. Blocking open.");
+        *retCode = false;
+        return;
+    }
+    if (result.threats_found == 0) {
         return;
     }
 
@@ -477,13 +491,20 @@ void onSceneBeforeOpenCheck(bool* retCode, MFileObject& file, void* clientData) 
 
     CleanFFIResult cleanResult = umbrella_clean_file(scenePath.asChar());
     if (cleanResult.files_failed > 0) {
-        MGlobal::displayError("Umbrella: Scene cleanup failed. Blocking open to avoid executing malicious scene content.");
+        MGlobal::displayError("Umbrella: Scene cleanup failed. Binary scenes require verified Maya standalone cleaning. Original preserved; open blocked.");
         *retCode = false;
         return;
     }
 
     if (cleanResult.files_deleted > 0) {
         MGlobal::displayError("Umbrella: Scene was removed during cleanup. Blocking open because there is no sanitized scene to load.");
+        *retCode = false;
+        return;
+    }
+
+    ScanResult verified = umbrella_scan_file(scenePath.asChar());
+    if (verified.threats_found != 0 || verified.files_scanned != 1) {
+        MGlobal::displayError("Umbrella: Cleanup could not be verified. Blocking open.");
         *retCode = false;
         return;
     }
