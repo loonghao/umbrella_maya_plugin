@@ -144,8 +144,9 @@ cli/           # umbrella-maya scanner/cleaner executable
 # Scan scenes like maya_umbrella_scanner
 umbrella-maya --path D:\show\assets --scene-only
 
-# Export infected files and clean through Maya standalone + the MLL plugin
-umbrella-maya --path D:\show\assets --maya-version 2024 --plugin path\to\umbrella_maya.mll
+# Copy-only native cleanup requires a verified production environment profile.
+# See docs/binary-scene-safety.md before using this experimental workflow.
+umbrella-maya --path D:\staging\asset.mb --clean --maya-version 2024 --plugin path\to\umbrella_maya.mll --environment-profile production.json --output-dir D:\staging\review
 
 # Offline text cleanup for .ma/.mel/.py files
 umbrella-maya --path D:\show\scripts --clean
@@ -153,6 +154,11 @@ umbrella-maya --path D:\show\scripts --clean
 # Machine-readable report
 umbrella-maya --path tests\virus --scene-only --json
 ```
+
+Offline cleaning never rewrites `.mb` files. Protected opens fail closed when
+scanning or cleanup fails. Native scene cleaning requires a production-matched
+Maya/plugin/dependency profile and writes separate copies; referenced scenes are
+currently refused. See [binary scene safety and validation limits](docs/binary-scene-safety.md).
 
 ### Python Extension Usage
 
@@ -400,12 +406,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 If you're currently using the Python version of maya_umbrella, here's how to migrate:
 
 ### 1. **Feature Parity**
-All core features from the Python version are implemented:
-- File and directory scanning
-- Threat pattern detection
-- Real-time protection
-- Maya scene analysis
-- Batch processing
+Feature parity is incomplete. File/directory scanning and scene hooks exist, but
+binary cleanup, references and production environment compatibility require the
+[safety acceptance gates](docs/binary-scene-safety.md). Do not migrate production
+assets on the basis of the current feature list alone.
 
 ### 2. **Command Mapping**
 | Python Command | Rust Plugin Command |

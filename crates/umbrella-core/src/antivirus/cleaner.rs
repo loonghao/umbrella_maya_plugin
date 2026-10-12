@@ -1,6 +1,6 @@
 //! Offline cleaning for infected Maya files and scripts.
 
-use crate::antivirus::detector::{Detector, PatternDetector};
+use crate::antivirus::detector::PatternDetector;
 use crate::antivirus::scanner::{FileSystemScanner, ScanOptions, Scanner};
 use crate::antivirus::signatures::{
     VirusSignature, aggressive_clean_signatures, default_clean_signatures,
@@ -9,6 +9,7 @@ use crate::error::{Result, UmbrellaError};
 use regex::bytes::Regex;
 use serde::Serialize;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -141,7 +142,7 @@ pub trait Cleaner {
         let path = Path::new(file_path);
         if let Some(extension) = path.extension() {
             let ext = extension.to_string_lossy().to_lowercase();
-            matches!(ext.as_str(), "py" | "mel" | "ma" | "mb")
+            matches!(ext.as_str(), "py" | "mel" | "ma")
         } else {
             false
         }
@@ -163,7 +164,11 @@ impl BackupCleaner {
     pub fn clean_path(&self, path: &str, options: &CleanOptions) -> Result<CleanSummary> {
         let start = Instant::now();
         let scanner = FileSystemScanner::new();
-        let scan_options = ScanOptions::default();
+        let scan_options = ScanOptions {
+            // Cleanup must not silently skip large scenes and report success.
+            max_file_size: None,
+            ..ScanOptions::default()
+        };
         let files = scanner.scan(path, &scan_options)?.files;
 
         let mut results = Vec::new();
@@ -200,28 +205,30 @@ impl BackupCleaner {
         })
     }
 
-    fn create_backup(&self, file_path: &str, options: &CleanOptions) -> Result<Option<String>> {
+    fn create_backup(
+        &self,
+        file_path: &str,
+        content: &[u8],
+        options: &CleanOptions,
+    ) -> Result<Option<String>> {
         if !options.create_backup {
             return Ok(None);
         }
 
         let source_path = Path::new(file_path);
-        if !source_path.exists() {
-            return Err(UmbrellaError::Antivirus(format!(
-                "Source file does not exist: {}",
-                file_path
-            )));
-        }
-
-        let backup_path = backup_path(source_path, options.backup_directory.as_deref())?;
-        if backup_path == source_path {
-            return Ok(None);
-        }
-        if let Some(parent) = backup_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(source_path, &backup_path)?;
-        Ok(Some(backup_path.to_string_lossy().to_string()))
+        let desired = backup_path(source_path, options.backup_directory.as_deref())?;
+        let parent = desired.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        // Exclusive, unique snapshots: a second cleanup must never overwrite the
+        // only recoverable original, even across concurrent processes.
+        let prefix = format!("{}.", source_path.file_name().unwrap().to_string_lossy());
+        let mut backup = tempfile::Builder::new()
+            .prefix(&prefix)
+            .tempfile_in(parent)?;
+        backup.write_all(content)?;
+        backup.as_file().sync_all()?;
+        let (_, saved_path) = backup.keep().map_err(|err| err.error)?;
+        Ok(Some(saved_path.to_string_lossy().to_string()))
     }
 
     fn clean_file_content(
@@ -252,6 +259,15 @@ impl Default for BackupCleaner {
 
 impl Cleaner for BackupCleaner {
     fn clean(&self, file_path: &str, options: &CleanOptions) -> Result<CleanResult> {
+        if Path::new(file_path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("mb"))
+        {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Maya binary scenes require Maya standalone with a verified production environment; offline byte replacement is disabled",
+            ));
+        }
         if !self.can_clean(file_path) {
             return Ok(CleanResult::failed(
                 file_path,
@@ -264,9 +280,24 @@ impl Cleaner for BackupCleaner {
             return Ok(CleanResult::failed(file_path, "File does not exist"));
         }
 
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Cleaning requires a regular, non-symlink file",
+            ));
+        }
+        let _lock = CleanLock::acquire(path)?;
         let content = fs::read(path)?;
+        // Do not allow a binary scene renamed with a text extension through.
+        if content.starts_with(b"FOR4") || content.starts_with(b"FOR8") || content.contains(&0) {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Binary content requires Maya-native cleaning",
+            ));
+        }
         let detector = PatternDetector::new();
-        let detection = detector.detect(file_path)?;
+        let detection = detector.detect_bytes(file_path, &content);
         if !detection.is_infected() {
             return Ok(CleanResult::already_clean(file_path));
         }
@@ -280,24 +311,45 @@ impl Cleaner for BackupCleaner {
             ));
         }
 
-        let backup = self.create_backup(file_path, options)?;
+        if detector
+            .detect_bytes(file_path, &cleaned_content)
+            .is_infected()
+        {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Known threat signatures remain after cleanup; original preserved",
+            ));
+        }
+        if options.in_place && metadata.permissions().readonly() {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Source is read-only; original preserved",
+            ));
+        }
+        let backup = self.create_backup(file_path, &content, options)?;
+        if fs::read(path)? != content {
+            return Ok(CleanResult::failed(
+                file_path,
+                "Source changed during cleaning; original preserved",
+            ));
+        }
         let trimmed_empty = cleaned_content
             .iter()
             .all(|byte| byte.is_ascii_whitespace());
 
-        if trimmed_empty && options.remove_original {
+        if trimmed_empty && options.remove_original && options.in_place {
             fs::remove_file(path)?;
             return Ok(CleanResult::deleted(file_path, backup, threats_removed));
         }
 
         if options.in_place {
-            fs::write(path, cleaned_content)?;
+            write_cleaned_file(path, &cleaned_content, &metadata, true)?;
         } else {
             let cleaned_path = cleaned_output_path(path);
             if let Some(parent) = cleaned_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&cleaned_path, cleaned_content)?;
+            write_cleaned_file(&cleaned_path, &cleaned_content, &metadata, false)?;
         }
 
         Ok(CleanResult::success(
@@ -311,6 +363,55 @@ impl Cleaner for BackupCleaner {
     fn name(&self) -> &str {
         &self.name
     }
+}
+
+// A sidecar serializes cooperating cleaners even when the source inode is
+// atomically replaced. A stale lock fails closed and must be reviewed by an operator.
+struct CleanLock(PathBuf);
+
+impl CleanLock {
+    fn acquire(path: &Path) -> Result<Self> {
+        let name = format!(
+            "{}.umbrella-clean.lock",
+            path.file_name().unwrap().to_string_lossy()
+        );
+        let lock_path = path.with_file_name(name);
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)?;
+        Ok(Self(lock_path))
+    }
+}
+
+impl Drop for CleanLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn write_cleaned_file(
+    path: &Path,
+    content: &[u8],
+    source_metadata: &fs::Metadata,
+    replace: bool,
+) -> Result<()> {
+    let mut staged = tempfile::NamedTempFile::new_in(
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new(".")),
+    )?;
+    staged.write_all(content)?;
+    staged
+        .as_file()
+        .set_permissions(source_metadata.permissions())?;
+    staged.as_file().sync_all()?;
+    if replace {
+        staged.persist(path).map_err(|err| err.error)?;
+    } else {
+        staged.persist_noclobber(path).map_err(|err| err.error)?;
+    }
+    Ok(())
 }
 
 fn replace_content_by_signatures(
@@ -432,13 +533,6 @@ fn line_references_removed_node(line: &str, removed_nodes: &[String]) -> bool {
 }
 
 fn backup_path(source_path: &Path, backup_root: Option<&str>) -> Result<PathBuf> {
-    if std::env::var("MAYA_UMBRELLA_IGNORE_BACKUP")
-        .unwrap_or_else(|_| "false".to_string())
-        .eq_ignore_ascii_case("true")
-    {
-        return Ok(source_path.to_path_buf());
-    }
-
     let file_name = source_path
         .file_name()
         .ok_or_else(|| UmbrellaError::Antivirus("Invalid file name".to_string()))?;
@@ -510,7 +604,7 @@ mod tests {
         assert!(cleaner.can_clean("test.py"));
         assert!(cleaner.can_clean("test.mel"));
         assert!(cleaner.can_clean("test.ma"));
-        assert!(cleaner.can_clean("test.mb"));
+        assert!(!cleaner.can_clean("test.mb"));
         assert!(!cleaner.can_clean("test.txt"));
         assert!(!cleaner.can_clean("test.jpg"));
     }
