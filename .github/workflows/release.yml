@@ -214,10 +214,10 @@ jobs:
   # Wheels are published as GitHub Release assets next to the Maya module zips, not to
   # PyPI: this project ships as a Maya plugin and PyPI is not a distribution channel.
   # This is a separate job rather than an extra glob on the 'Upload to GitHub Release'
-  # step above, because that step lives in the 24-lane Maya matrix and cannot see the
+  # step above, because that step lives in the 23-lane Maya matrix and cannot see the
   # python-wheels artifacts. Waiting on the whole build matrix costs no wall-clock time
   # (the wheel lanes finish long before the slowest Maya lane) and keeps one softprops
-  # upload from racing the 24 concurrent ones.
+  # upload from racing the 23 concurrent ones.
   attach-wheels:
     name: Attach Python wheels to the GitHub Release
     needs: [build, python-wheels]
