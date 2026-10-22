@@ -46,8 +46,8 @@ serde_json = "1.0"
 # the graph entirely: the manylinux container that builds the Python wheels ships no
 # OpenSSL development package, so a native-tls build fails there with "No package
 # 'openssl' found". The other default features are listed explicitly so that only the
-# TLS backend changes (charset, http2, macos-system-configuration).
-reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls"] }
+# TLS backend changes (charset, http2, system-proxy).
+reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "system-proxy", "rustls-tls"] }
 zip = "4.0.0"
 walkdir = "2.0"
 colored = "3.0"
