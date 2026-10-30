@@ -5,6 +5,7 @@
 
 pub mod cleaner;
 pub mod detector;
+mod encoded;
 pub mod scanner;
 pub mod signatures;
 

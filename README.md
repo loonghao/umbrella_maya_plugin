@@ -5,6 +5,11 @@
 
 **High-performance Rust implementation of [maya_umbrella](https://github.com/loonghao/maya_umbrella)** - A next-generation Maya antivirus plugin that bypasses Python security restrictions while delivering superior performance.
 
+For an evidence-based comparison against the original Python tool (covered /
+partial / missing capabilities, with code and test references and a clear
+separation of README claims from verified behavior), see the
+[capability compatibility matrix](docs/capability-matrix.md).
+
 ## Project Overview
 
 This project is a **complete Rust rewrite** of the original [maya_umbrella](https://github.com/loonghao/maya_umbrella) Python tool, designed to overcome the security limitations imposed on Python scripts in newer Maya versions. By implementing the core functionality in Rust and exposing it through a native C++ Maya plugin, we achieve:
