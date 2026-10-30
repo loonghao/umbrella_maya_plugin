@@ -9,6 +9,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+/// Synthetic `ThreatMatch` name emitted when the encoded-payload decode budget
+/// is exhausted. It is not a virus signature: because every consumer keys on
+/// `matches` (`is_infected`, `threats_found`, and both C ABI count paths), this
+/// one finding makes a truncated scan fail closed instead of being trusted as
+/// a clean result.
+pub const SCAN_INCOMPLETE: &str = "encoded:scan-incomplete";
+
 /// Threat level classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ThreatLevel {
@@ -164,7 +171,8 @@ impl PatternDetector {
         // Signature recovery from base64-encoded scriptNode payloads. Matches
         // are reported against the location of the encoded run in the original
         // file and prefixed so reports distinguish encoded hits from plaintext.
-        for payload in decode_embedded_payloads(content) {
+        let decoded = decode_embedded_payloads(content);
+        for payload in &decoded.payloads {
             let line = line_number(content, payload.offset);
             for pattern in &self.patterns {
                 if pattern.regex.is_match(&payload.bytes) {
@@ -178,7 +186,26 @@ impl PatternDetector {
             }
         }
 
-        DetectionResult::from_matches(file_path, matches)
+        // A truncated decode cannot prove the file is clean. Emit a synthetic,
+        // clearly-named finding so consumers fail closed rather than trusting
+        // a partial scan and declaring the scene clean (see SCAN_INCOMPLETE).
+        if decoded.truncated {
+            matches.push(ThreatMatch {
+                name: SCAN_INCOMPLETE.to_string(),
+                pattern: "decode budget exhausted; scan incomplete".to_string(),
+                line: 0,
+                offset: 0,
+            });
+        }
+
+        let mut result = DetectionResult::from_matches(file_path, matches);
+        if decoded.truncated {
+            result.description = format!(
+                "{}; encoded-payload decode budget exhausted, scan incomplete (fail-closed)",
+                result.description
+            );
+        }
+        result
     }
 
     pub fn patterns(&self) -> Vec<ThreatPattern> {

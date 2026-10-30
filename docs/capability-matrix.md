@@ -26,7 +26,7 @@ Status legend: **已覆盖** covered · **部分** partial · **缺失** missing
 |---|---|---|---|
 | 1 | Virus signatures: `JOB_SCRIPT`, `FILE`, `maya_secure_system` script nodes/files | 已覆盖 | `crates/umbrella-core/src/antivirus/signatures.rs` ports the upstream constants; `scanner_signatures()` dedups JOB+FILE by pattern; `PatternDetector::from_signatures` compiles them as `regex::bytes` |
 | 2 | Offline file/directory scanning (`.ma`, `.mb`, `userSetup.py`, `.mel`) | 已覆盖 | `scanner.rs` `FileSystemScanner::scan_with_detector`, `ScanOptions::maya_scene_files()`; CLI `src/bin/umbrella-maya.rs`; FFI `umbrella_scan_file` in `src/ffi/c_api.rs` |
-| 3 | ScriptNode string attributes whose payload is **base64-encoded** (`setAttr ".nts"`) | **缺失 → 已覆盖 (this change)** | Baseline `detect_bytes` scanned literal bytes only, so `tests/virus/2024-4-30.ma` and `uifiguration.ma` were reported clean. This change adds `antivirus/encoded.rs` + `detect_bytes` decode pass; regression `crates/umbrella-core/tests/encoded_payload_test.rs`. Also flows into the C++ live scan via `umbrella_scan_content` |
+| 3 | ScriptNode string attributes whose payload is **base64-encoded** (`setAttr ".nts"`) | **缺失 → 已覆盖 (this change)** | Baseline `detect_bytes` scanned literal bytes only, so `tests/virus/2024-4-30.ma` and `uifiguration.ma` were reported clean. This change adds `antivirus/encoded.rs` (valid-UTF-8 text filter, no new crate dependency) + `detect_bytes` decode pass; regression `crates/umbrella-core/tests/encoded_payload_test.rs`. Also flows into the C++ live scan via `umbrella_scan_content`. See [Known limitations](#known-limitations-this-change) for the decode budget and `encodebytes` caveats |
 | 4 | Live scriptNode `before`/`after`/`notes` inspection and named-node heuristics | 部分 | `src/maya/umbrella_maya_plugin.cpp` `fixInfectedScriptNodes()` (checks `uifiguration`, `maya_secure_system_scriptNode`, `_gene`, `codeExtractor`, … and calls `umbrella_scan_content`). Requires a real Maya host; no automated coverage in this repo |
 | 5 | scriptJob / scriptNode detection from live scene graph | 部分 | `signatures.rs` `scanner_signatures()` includes JOB_SCRIPT patterns; C++ `killInfectedScriptJobs()`. Offline scanner cannot enumerate live jobs — host-only |
 | 6 | Vaccine families: PuTianTongQi, ZeiJianKang, Virus2024429/uifiguration, maya_secure_system | 部分 | Detection via ported signatures (`uifiguration`, `maya_secure_system*`, `leukocyte_eval_deferred`, `vaccine`); the upstream **vaccine fix/hook scripts** (`vaccines/vaccine1-4.py`) are not ported as executable remediation |
@@ -46,7 +46,7 @@ Status legend: **已覆盖** covered · **部分** partial · **缺失** missing
 
 | # | maya_umbrella capability | Status | Evidence in Rust rewrite |
 |---|---|---|---|
-| 13 | `MSceneMessage` callbacks (before-open check, after-open, after-save) and auto-fix | 部分 | `src/maya/umbrella_maya_plugin.cpp` registers `kBeforeOpenCheck`/`kAfterOpen`/`kAfterSave` (`onSceneBeforeOpenCheck` scans → cleans → re-verifies, else blocks open). Semantics differ from upstream `defender.py` (no `context_defender`, no global `auto_fix`) |
+| 13 | `MSceneMessage` callbacks (before-open check, after-open, after-save) and auto-fix | 部分 | `src/maya/umbrella_maya_plugin.cpp` registers `kBeforeOpenCheck`/`kAfterOpen`/`kAfterSave` (`onSceneBeforeOpenCheck` scans → cleans → re-verifies, else blocks open). Semantics differ from upstream `defender.py` (no `context_defender`, no global `auto_fix`). **Behavior change (this change):** a text `.ma` whose encoded scriptNode payload now matches is blocked from opening (previously it opened and the payload could execute); the offline cleaner only removes literal signatures, so it returns `Failed` and preserves the original — there is no in-Maya repair for encoded payloads. See [Known limitations](#known-limitations-this-change) for offline disposal |
 | 14 | Python `MayaVirusDefender` real-time facade (`start`/`stop`/`collect`/`fix`/`report`) | 部分 / non-functional | `src/python.rs` `MayaVirusDefender` methods are **no-ops** (compatibility facade only). Real protection is the C++ plugin, not this class |
 
 ## Platform / compatibility
@@ -95,15 +95,22 @@ The vertical slice "old candidate fails → minimal fix → regression":
    scriptNode payloads are base64-encoded — were reported **clean**. Raw `.ma`
    fixtures contain zero literal signature hits.
 2. **GREEN (minimal fix).** `antivirus/encoded.rs` recovers base64 runs
-   (bounded, printable-only, skips NUL/binary content, no new crate dependency)
-   and `PatternDetector::detect_bytes` scans decoded payloads, prefixing matches
-   with `encoded:`. Because `umbrella_scan_content` (C ABI) calls the same
-   `detect_bytes`, the fix also applies to live C++ scriptNode inspection.
+   (bounded, valid-UTF-8-text-only via `Utf8Chunks`, skips NUL/binary content,
+   no new crate dependency) and `PatternDetector::detect_bytes` scans decoded
+   payloads, prefixing matches with `encoded:`. There is no per-run *count* cap;
+   if the 8 MiB decoded-byte budget is exhausted the scan is marked incomplete
+   and fails closed (a clearly-named `encoded:scan-incomplete` finding) instead
+   of silently declaring the scene clean. Because `umbrella_scan_content` (C
+   ABI) calls the same `detect_bytes`, the fix also applies to live C++
+   scriptNode inspection.
 3. **REGRESSION.** `tests/encoded_payload_test.rs` covers: a synthetic encoded
    scriptNode, the two real legacy `.ma` fixtures, a benign base64 control, a
-   binary/NUL control, and the file-based `Detector::detect` path. After the
-   fix a real-fixture scan reports `2024-4-30.ma` and `uifiguration.ma`
-   infected (`encoded:userSetup`, `encoded:vaccine`,
+   binary/NUL control, the file-based `Detector::detect` path, and a padded
+   scene (a huge benign run before the real payload) that must fail closed
+   rather than report clean. `encoded.rs` unit tests pin the valid-UTF-8 filter
+   (`'A'*128` and random bytes are rejected) and the truncated-budget flag.
+   After the fix a real-fixture scan reports `2024-4-30.ma` and
+   `uifiguration.ma` infected (`encoded:userSetup`, `encoded:vaccine`,
    `encoded:leukocyte_eval_deferred`, …). The cleaner remains fail-closed:
    re-scanning a cleaned-but-still-encoded real scene preserves the original
    bytes and returns `Failed` with a non-zero exit.
@@ -116,3 +123,35 @@ vx just preflight                                   # unified local/CI entry
 python scripts/check_toolchain_pins.py --self-test    # pin-guard self-test
 cargo test -p umbrella-core --test encoded_payload_test
 ```
+
+## Known limitations (this change)
+
+The base64 payload recovery is deliberately conservative. These are honest
+bounds, **not** claims of full coverage:
+
+- **Decode byte budget / fail-closed.** Decoding is bounded to 8 MiB of decoded
+  bytes per file; there is no per-run *count* cap (a count cap could hide a
+  trailing scriptNode payload behind a wall of benign base64). A scene whose
+  candidate runs exceed the budget cannot be fully verified, so the scan is
+  marked incomplete and fails closed (`encoded:scan-incomplete`) — it is
+  reported **unsafe, not clean**. A very large or deliberately padded scene may
+  therefore need offline triage; the two real legacy fixtures (76 KB / 64 KB)
+  and the 20 MB benign `jiankang_sample.ma` (no long base64 runs) are unaffected.
+- **Single-line base64 only.** The run finder treats line breaks as delimiters,
+  so base64 produced with line wrapping (for example Python's
+  `base64.encodebytes`, 76 chars per line) is split into multiple short runs
+  and a signature spanning a line boundary could be missed. Both real legacy
+  samples store the payload as one continuous base64 string, so they are
+  unaffected.
+- **Before-open behavior / offline disposal.** For a text `.ma` containing an
+  encoded scriptNode payload, the offline cleaner can only remove *literal*
+  signatures, so it returns `Failed` and preserves the original; the C++
+  before-open check then blocks opening the scene. There is **no in-Maya repair
+  path** for encoded payloads in this change. The failure message shown by the
+  C++ plugin still says "Binary scenes require verified Maya standalone
+  cleaning", which is imprecise for a text `.ma`; the packaged `.mll` is not
+  rebuilt here (no Maya DevKit), so the wording is documented rather than
+  shipped, and the blocking behavior is unchanged. To recover, delete the
+  offending `scriptNode` block from the `.ma` in a text editor (or restore
+  from a clean backup) and re-scan; a verified Maya standalone live-clean is a
+  separate, host-gated capability (rows 10, 22).

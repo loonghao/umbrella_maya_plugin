@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use tempfile::tempdir;
-use umbrella_core::antivirus::detector::{Detector, PatternDetector};
+use umbrella_core::antivirus::detector::{Detector, PatternDetector, SCAN_INCOMPLETE};
 use umbrella_core::antivirus::scanner::{FileSystemScanner, ScanOptions};
 
 /// A malicious script body carrying two known file-content signatures.
@@ -161,5 +161,34 @@ fn detector_reads_file_and_detects_encoded_payload() {
     assert!(
         result.is_infected(),
         "the file-based Detector::detect path must also recover encoded payloads"
+    );
+}
+
+#[test]
+fn padded_scene_fails_closed_instead_of_reporting_clean() {
+    // F2 regression: a scene is padded with a huge benign base64 run placed
+    // before the real encoded scriptNode payload. The trailing payload sits
+    // near the end of a `.ma` file, exactly where a bounded decoder could skip
+    // it. Hitting the byte budget must fail closed, never silently pass clean.
+    let mut content = b"//Maya ASCII 2024 scene\n".to_vec();
+    let pad_len = content.len() + 12 * 1024 * 1024;
+    content.resize(pad_len, b'A');
+    content.push(b'\n');
+    content.extend_from_slice(&scene_with_payload(EVIL_SCRIPT));
+
+    let result = PatternDetector::new().detect_bytes("padded.ma", &content);
+    assert!(
+        result.is_infected(),
+        "a padded/truncated scene must fail closed, not be reported clean"
+    );
+    assert!(
+        result.description.contains("incomplete"),
+        "the report must state the scan was incomplete, got {:?}",
+        result.description
+    );
+    assert!(
+        result.matches.iter().any(|m| m.name == SCAN_INCOMPLETE),
+        "truncation must surface the scan-incomplete marker, got {:?}",
+        result.matches.iter().map(|m| &m.name).collect::<Vec<_>>()
     );
 }
