@@ -1,5 +1,6 @@
 //! Signature-based threat detection for Maya files and scripts.
 
+use crate::antivirus::encoded::decode_embedded_payloads;
 use crate::antivirus::signatures::{VirusSignature, scanner_signatures};
 use crate::error::{Result, UmbrellaError};
 use regex::bytes::Regex;
@@ -148,6 +149,7 @@ impl PatternDetector {
     pub fn detect_bytes(&self, file_path: &str, content: &[u8]) -> DetectionResult {
         let mut matches = Vec::new();
 
+        // Plain-text signatures in the literal scene/script contents.
         for pattern in &self.patterns {
             for hit in pattern.regex.find_iter(content) {
                 matches.push(ThreatMatch {
@@ -156,6 +158,23 @@ impl PatternDetector {
                     line: line_number(content, hit.start()),
                     offset: hit.start(),
                 });
+            }
+        }
+
+        // Signature recovery from base64-encoded scriptNode payloads. Matches
+        // are reported against the location of the encoded run in the original
+        // file and prefixed so reports distinguish encoded hits from plaintext.
+        for payload in decode_embedded_payloads(content) {
+            let line = line_number(content, payload.offset);
+            for pattern in &self.patterns {
+                if pattern.regex.is_match(&payload.bytes) {
+                    matches.push(ThreatMatch {
+                        name: format!("encoded:{}", pattern.signature.name),
+                        pattern: pattern.signature.pattern.to_string(),
+                        line,
+                        offset: payload.offset,
+                    });
+                }
             }
         }
 
