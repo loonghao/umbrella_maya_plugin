@@ -9,6 +9,12 @@ fmt:
 fmt-check:
     cargo fmt -- --check
 
+# Reconcile every pinned tool version (rust-toolchain.toml, vx.toml, Cargo.toml,
+# CI actions) and fail loudly on the Windows GNU/raw-dylib host defect instead of
+# silently working around it. Self-test needs no toolchain: --self-test.
+check-toolchain:
+    python scripts/check_toolchain_pins.py
+
 check:
     cargo check --workspace --all-targets
     cargo check --workspace --all-targets --features python
@@ -23,7 +29,7 @@ coverage:
     python -c "import os; os.makedirs('coverage', exist_ok=True)"
     cargo llvm-cov --workspace --all-targets --features python --lcov --output-path coverage/lcov.info
 
-preflight: fmt-check check clippy test build-cli build-pyd
+preflight: check-toolchain fmt-check check clippy test build-cli build-pyd
 
 build-tool:
     cargo build --bin cargo-maya-build --release

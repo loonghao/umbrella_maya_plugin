@@ -1,0 +1,28 @@
+# Pinned development toolchain and the single local/CI entry point.
+#
+# `vx just preflight` locally and `vx just preflight` in .github/workflows/ci.yml
+# are the same command. All lint/test/build steps live in the Justfile so a tool
+# bump happens in one place. The `check-toolchain` recipe (first in preflight)
+# runs scripts/check_toolchain_pins.py, which reconciles the pinned versions
+# below with rust-toolchain.toml, Cargo.toml and the CI actions, and fails loudly
+# instead of silently bypassing known VX/toolchain defects.
+
+[tools]
+# just is the only tool VX provisions here; pin it so a clean runner and an
+# existing dev box resolve the same task-runner semantics.
+just = "1.50.0"
+
+# Rust is deliberately NOT listed under [tools]. vx's Rust provider has a known
+# defect: it resolves cargo/rustc through its own store, ignores the pinned
+# channel, and can switch the rustup default to `stable`. The build toolchain
+# therefore comes from rustup, pinned by rust-toolchain.toml (channel 1.95.0)
+# and installed in CI by dtolnay/rust-toolchain@1.95.0. Python 3.11 (provided
+# by actions/setup-python) and cbindgen 0.29.2 (CBINDGEN_VERSION) are pinned in
+# CI, not by VX, so VX cannot shadow them in `vx just` recipes.
+# check_toolchain_pins.py verifies all of these agree and refuses to let a new
+# `rust` tool pin reintroduce the channel-switching defect.
+
+[scripts]
+preflight = "vx just preflight"
+test = "vx just test"
+package = "vx just package"
